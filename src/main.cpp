@@ -17,8 +17,9 @@
  * 
  * Hardware: ESP32-S3 (QDTFT ES3C28P)
  * Display: 2.8" IPS 320x240 ILI9341  |  Touch: FT6336G capacitive I2C
- * 
- * Version: 2.0 - Production Ready
+ * Orientation: Landscape 320×240 (setRotation 1, inverted)
+ *
+ * Version: 3.0 - Landscape layout (data left · map right · seismo bottom)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -71,9 +72,9 @@ const uint8_t TOUCH_ADDR = 0x38;
 
 // Typography — GFX Free Sans (anti-aliased appearance, much cleaner than bitmap)
 #define FONT_LABEL  &FreeSans9pt7b       // Headers, labels
-#define FONT_DATA   &FreeSans9pt7b        // Magnitude numbers — medium weight
+#define FONT_DATA   &FreeSansBold9pt7b   // Magnitude numbers — compact bold
 
-const int SCREEN_WIDTH  = 240;   // Portrait mode — 240×240 visible square
+const int SCREEN_WIDTH  = 320;   // Landscape — full 320×240 canvas (setRotation 1)
 const int SCREEN_HEIGHT = 240;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,34 +91,34 @@ const int HTTP_TIMEOUT = 5000;                      // 5 seconds
 const byte DNS_PORT = 53;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DISPLAY LAYOUT — Asymmetric: data left, square map right, seismograph bottom
+// DISPLAY LAYOUT — Landscape 320×240: data left, large map right, seismo bottom
 // ═══════════════════════════════════════════════════════════════════════════
 
-const int HEADER_H = 18;
+const int HEADER_H = 20;
 
-// Left column - Data readouts (latest + highest stacked)
-const int DATA_X = 2;
-const int DATA_Y = HEADER_H;
-const int DATA_WIDTH = 76;
-const int DATA_HEIGHT = 158;
+// Left column - Data readouts (LATEST + 24H HIGH stacked)
+const int DATA_X = 3;
+const int DATA_Y = HEADER_H + 2;                 // 22
+const int DATA_WIDTH = 112;                      // wide enough for proper location text
+const int DATA_HEIGHT = 158;                     // down to the seismograph divider (22..180)
 
-// Right area - Square map
-const int MAP_X = 82;
-const int MAP_Y = HEADER_H;
-const int MAP_WIDTH = 156;
-const int MAP_HEIGHT = 158;
+// Right area - Map (fills the remaining width)
+const int MAP_X = 122;
+const int MAP_Y = DATA_Y;                        // 22
+const int MAP_WIDTH = 195;                       // 122..317
+const int MAP_HEIGHT = DATA_HEIGHT;              // 158
 
-// Bottom strip - seismograph background area (full-width)
-const int SEISMO_X = 4;
-const int SEISMO_Y = 180;
-const int SEISMO_WIDTH = 232;
-const int SEISMO_HEIGHT = 56;
-const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);
+// Bottom strip - seismograph background area (edge to edge)
+const int SEISMO_HEIGHT = 54;
+const int SEISMO_Y = SCREEN_HEIGHT - SEISMO_HEIGHT - 2;       // 184
+const int SEISMO_X = 0;
+const int SEISMO_WIDTH = SCREEN_WIDTH;                        // 320 — full width
+const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);  // 211
 const int SEISMO_MAX_AMPLITUDE = 50;
 
-// Floating line area — 70% of screen width, centred
-const int SEISMO_LINE_W = (SCREEN_WIDTH * 7) / 10;        // 168 px
-const int SEISMO_LINE_X = (SCREEN_WIDTH - SEISMO_LINE_W) / 2;  // 36 px
+// Trace spans the full screen width, edge to edge
+const int SEISMO_LINE_W = SCREEN_WIDTH;                       // 320 px
+const int SEISMO_LINE_X = 0;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REGIONAL BOUNDARIES
@@ -130,7 +131,7 @@ struct RegionBounds {
   float lonMax;
 };
 
-const RegionBounds BOUNDS_NZ = {-49.5, -32.0, 163.5, 181.5};
+const RegionBounds BOUNDS_NZ = {-47.3, -34.0, 166.0, 179.0};
 const RegionBounds BOUNDS_JAPAN = {30.0, 45.5, 129.0, 146.0};
 const RegionBounds BOUNDS_CHINA = {18.0, 54.0, 73.0, 135.0};  // Entire mainland China
 const RegionBounds BOUNDS_CALIFORNIA = {32.5, 42.0, -124.5, -114.0};
@@ -175,6 +176,7 @@ struct Config {
   char region[16];
   float magThreshold;
   int fontSize;
+  char aesthetic[16];
   bool showRecentQuakes;
   bool showCityDots;
   int soundMode;    // 0=off, 1=retro, 2=rumble
@@ -220,6 +222,7 @@ int displayMode = 0;
 bool isRestMode = false;
 bool isConfigMode = false;
 bool showingAlert = false;
+bool showingSettings = false;
 
 
 
@@ -232,6 +235,7 @@ unsigned long lastDisplaySwitch = 0;
 unsigned long lastActivity = 0;
 unsigned long lastButtonPress = 0;
 unsigned long alertStartTime  = 0;
+unsigned long settingsStartTime = 0;
 unsigned long lastTouchTime   = 0;   // millis() of last confirmed tap
 bool          prevTouching    = false;
 
@@ -254,25 +258,68 @@ String lastTriggeredQuakeID = "";
 // THEME DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-Theme createHUDTheme() {
+Theme createElegantTheme() {
   Theme t;
-  t.background    = 0x0000;  // Black
-  t.border        = 0x0160;  // Very dark green
-  t.divider       = 0x0180;  // Dark green
-  t.textPrimary   = 0x07E0;  // Phosphor green
-  t.textSecondary = 0x03A0;  // Medium green ~50%
-  t.textAccent    = 0x07E0;
-  t.seismoLine    = 0x07E0;  // Phosphor green
-  t.seismoGrid    = 0x00E0;  // Very dim green
-  t.mapOutline    = 0x0460;  // Medium green
-  t.mapCity       = 0x07E0;
-  t.mapOcean      = 0x0000;  // Black
-  t.mapLand       = 0x01A0;  // Dark green
-  t.dataLatest    = 0x07E0;  // Full phosphor green
-  t.dataHighest   = 0x87E0;  // Chartreuse — visually distinct from latest
+  t.background = TFT_BLACK;
+  t.border = 0x2104;
+  t.divider = 0x2104;
+  t.textPrimary = 0xE71C;    // Warm white
+  t.textSecondary = 0x8410;  // Medium grey
+  t.textAccent = 0x7DBA;     // Muted seafoam
+  t.seismoLine = 0x5654;     // Soft teal/seafoam
+  t.seismoGrid = 0x18C3;     // Very dark grey
+  t.mapOutline = 0x6B4D;     // Light grey
+  t.mapCity = 0x7DBA;         // Muted seafoam
+  t.mapOcean = 0x0108;       // Very dark navy
+  t.mapLand  = 0x2965;       // Dark warm grey-green
+  t.dataLatest  = 0xAE9C;    // Pale aqua/seafoam
+  t.dataHighest = 0xCB0B;    // Dusty coral/terracotta
   return t;
 }
 
+Theme createContrastTheme() {
+  Theme t;
+  t.background = TFT_BLACK;
+  t.border = 0x2945;
+  t.divider = 0x4208;
+  t.textPrimary = TFT_WHITE;
+  t.textSecondary = 0xBDF7;  // Light grey
+  t.textAccent = 0xB7FC;     // Bright aqua
+  t.seismoLine = 0x67F8;     // Bright teal
+  t.seismoGrid = 0x39E7;
+  t.mapOutline = 0xBDF7;
+  t.mapCity = 0xB7FC;
+  t.mapOcean = 0x0108;       // Very dark navy
+  t.mapLand  = 0x4A49;       // Medium dark grey
+  t.dataLatest  = 0xB7FC;    // Bright aqua
+  t.dataHighest = 0xE34B;    // Bright coral
+  return t;
+}
+
+Theme createMonoTheme() {
+  Theme t;
+  t.background = TFT_BLACK;
+  t.border = 0x4208;
+  t.divider = 0x4208;
+  t.textPrimary = TFT_WHITE;
+  t.textSecondary = 0xBDF7;
+  t.textAccent = TFT_WHITE;
+  t.seismoLine = TFT_WHITE;
+  t.seismoGrid = 0x2945;
+  t.mapOutline = 0x8410;
+  t.mapCity = TFT_WHITE;
+  t.mapOcean = 0x0000;       // Black ocean
+  t.mapLand  = 0x2945;       // Dark grey land
+  t.dataLatest  = TFT_WHITE;
+  t.dataHighest = 0xBDF7;
+  return t;
+}
+
+Theme loadTheme(const char* aesthetic) {
+  if (strcmp(aesthetic, "contrast") == 0) return createContrastTheme();
+  if (strcmp(aesthetic, "mono") == 0) return createMonoTheme();
+  return createElegantTheme();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION MANAGEMENT
@@ -286,6 +333,7 @@ void loadConfig() {
   preferences.getString("region", config.region, sizeof(config.region));
   config.magThreshold = preferences.getFloat("mag_thresh", 2.0);
   config.fontSize = preferences.getInt("font_size", 2);
+  preferences.getString("aesthetic", config.aesthetic, sizeof(config.aesthetic));
   config.showRecentQuakes = preferences.getBool("show_recent", true);
   config.showCityDots = preferences.getBool("show_cities", false);
   config.soundMode = preferences.getInt("sound_mode", 0);
@@ -293,6 +341,8 @@ void loadConfig() {
   preferences.end();
 
   if (strlen(config.region) == 0) strcpy(config.region, "NZ");
+  if (strlen(config.aesthetic) == 0) strcpy(config.aesthetic, "elegant");
+  
   Serial.println("Config loaded");
 }
 
@@ -304,6 +354,7 @@ void saveConfig() {
   preferences.putString("region", config.region);
   preferences.putFloat("mag_thresh", config.magThreshold);
   preferences.putInt("font_size", config.fontSize);
+  preferences.putString("aesthetic", config.aesthetic);
   preferences.putBool("show_recent", config.showRecentQuakes);
   preferences.putBool("show_cities", config.showCityDots);
   preferences.putInt("sound_mode", config.soundMode);
@@ -347,32 +398,29 @@ bool isUsingNZAPI(const char* region) {
 // MAP PROJECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Equirectangular projection with cos(centerLat) correction so that
-// 1° of longitude maps to the correct fraction of 1° of latitude in pixels.
+// Equal-aspect projection: same pixels-per-degree for lat and lon,
+// result centred within the MAP panel so shapes aren't squished.
 static void getMapAspect(const RegionBounds& db,
-                         float& scale, float& offX, float& offY, float& cosLat) {
+                         float& scale, float& offX, float& offY) {
   float latSpan = db.latMax - db.latMin;
   float lonSpan = db.lonMax - db.lonMin;
-  float centerLat = (db.latMax + db.latMin) * 0.5f;
-  cosLat = cos(radians(centerLat));
-  float effectiveLonSpan = lonSpan * cosLat;
-  scale = min((float)MAP_WIDTH / effectiveLonSpan, (float)MAP_HEIGHT / latSpan);
-  offX  = (MAP_WIDTH  - scale * effectiveLonSpan) * 0.5f;
+  scale = min((float)MAP_WIDTH / lonSpan, (float)MAP_HEIGHT / latSpan);
+  offX  = (MAP_WIDTH  - scale * lonSpan) * 0.5f;
   offY  = (MAP_HEIGHT - scale * latSpan) * 0.5f;
 }
 
 int mapLatToScreen(float lat) {
   RegionBounds db = getRegionBounds(config.region);
-  float scale, offX, offY, cosLat;
-  getMapAspect(db, scale, offX, offY, cosLat);
-  return MAP_Y + (int)(offY + (db.latMax - lat) * scale);
+  float scale, offX, offY;
+  getMapAspect(db, scale, offX, offY);
+  return MAP_Y + (int)(offY + (db.latMax - lat) / (db.latMax - db.latMin) * scale * (db.latMax - db.latMin));
 }
 
 int mapLonToScreen(float lon) {
   RegionBounds db = getRegionBounds(config.region);
-  float scale, offX, offY, cosLat;
-  getMapAspect(db, scale, offX, offY, cosLat);
-  return MAP_X + (int)(offX + (lon - db.lonMin) * scale * cosLat);
+  float scale, offX, offY;
+  getMapAspect(db, scale, offX, offY);
+  return MAP_X + (int)(offX + (lon - db.lonMin) / (db.lonMax - db.lonMin) * scale * (db.lonMax - db.lonMin));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -428,6 +476,7 @@ void drawDataPanel();
 int  drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color);
 void drawMap();
 void drawMapGraticule(uint16_t color);
+void drawHeader();
 
 void drawNZMap();
 void drawJapanMap();
@@ -437,6 +486,7 @@ void drawGlobalMap();
 void animateSeismograph();
 void checkForEarthquakes();
 void displayEarthquakeAlert(EarthquakeData* quake);
+void drawSettingsScreen();
 void handleButton();
 void setupConfigPortal();
 void setupWebServer();
@@ -460,7 +510,7 @@ void setup() {
   pinMode(TFT_BL_PIN, OUTPUT);
   digitalWrite(TFT_BL_PIN, HIGH);
 
-  delay(3000);
+  delay(100);
   Serial.begin(115200);
   delay(1000);
 
@@ -469,10 +519,10 @@ void setup() {
   Serial.println("══════════════════════════════\n");
 
   loadConfig();
-  currentTheme = createHUDTheme();
+  currentTheme = createElegantTheme();  // Always dark mode
 
   tft.init();
-  tft.setRotation(0);      // Portrait — 240×320; UI uses top 240×240 square
+  tft.setRotation(1);      // Landscape — 320×240 (native 240×320 panel rotated)
   tft.invertDisplay(true);
   tft.fillScreen(currentTheme.background);
 
@@ -494,9 +544,9 @@ void setup() {
   }
   
   tft.setTextColor(currentTheme.textPrimary);
-  tft.drawCentreString("SEISMONITOR", 120, 100, 4);
+  tft.drawCentreString("SEISMONITOR", 160, 100, 4);
   tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("Connecting...", 120, 132, 2);
+  tft.drawCentreString("Connecting...", 160, 132, 2);
   
   WiFi.mode(WIFI_STA);
   WiFi.begin(config.wifiSSID, config.wifiPassword);
@@ -532,7 +582,7 @@ void setup() {
 
   setupWebServer();
   
-  tft.drawCentreString("Connected", 120, 155, 2);
+  tft.drawCentreString("Connected", 160, 155, 2);
   delay(2000);
   
   checkForEarthquakes();
@@ -570,7 +620,16 @@ void loop() {
     }
     return;
   }
-  
+
+  if (showingSettings) {
+    if (now - settingsStartTime > 30000UL) {   // auto-close after 30s
+      showingSettings = false;
+      drawUI();
+      lastActivity = now;
+    }
+    return;
+  }
+
   if (now - lastSeismoUpdate > SEISMO_UPDATE_INTERVAL) {
     animateSeismograph();
     lastSeismoUpdate = now;
@@ -668,22 +727,62 @@ void drawWrappedText(const char* text, int startX, int startY, int maxWidth, int
 // UI DRAWING
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Settings gear centre (top-left corner) — also the touch hit target.
+const int GEAR_CX = 13;
+const int GEAR_CY = 9;
+
+// Small gear/cog icon centred at (cx,cy).
+void drawGearIcon(int cx, int cy, uint16_t color) {
+  for (int a = 0; a < 360; a += 45) {
+    float r = a * 0.01745329f;
+    int x0 = cx + (int)(cosf(r) * 4), y0 = cy + (int)(sinf(r) * 4);
+    int x1 = cx + (int)(cosf(r) * 8), y1 = cy + (int)(sinf(r) * 8);
+    tft.drawLine(x0, y0,     x1, y1,     color);
+    tft.drawLine(x0, y0 + 1, x1, y1 + 1, color);   // 2px teeth
+  }
+  tft.fillCircle(cx, cy, 5, color);
+  tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole
+}
+
+// Top status bar — settings gear (left), centred title, live WiFi bars (right).
+void drawHeader() {
+  tft.fillRect(0, 0, SCREEN_WIDTH, HEADER_H - 1, currentTheme.background);
+  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);
+
+  // Settings gear (top-left corner) — tap to open settings
+  drawGearIcon(GEAR_CX, GEAR_CY, currentTheme.textSecondary);
+
+  // Title (centred)
+  tft.setFreeFont(FONT_LABEL);
+  tft.setTextColor(currentTheme.textAccent);
+  int tw = tft.textWidth("SEISMONITOR");
+  tft.setCursor(SCREEN_WIDTH / 2 - tw / 2, 14);
+  tft.print("SEISMONITOR");
+
+  // WiFi signal bars (right) — 3 ascending bars, filled by RSSI strength
+  int rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
+  int bars = rssi > -60 ? 3 : rssi > -72 ? 2 : rssi > -85 ? 1 : 0;
+  for (int i = 0; i < 3; i++) {
+    int bh = 4 + i * 3;
+    int bx = SCREEN_WIDTH - 24 + i * 6;
+    int by = 4 + (10 - bh);
+    tft.fillRect(bx, by, 4, bh, (i < bars) ? currentTheme.textAccent : currentTheme.seismoGrid);
+  }
+}
+
 void drawUI() {
   tft.fillScreen(currentTheme.background);
-  
-  // Header bar
-  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);
-  tft.setFreeFont(FONT_LABEL);
-  
-  // Divider between data column and map
-  tft.drawFastVLine(DATA_X + DATA_WIDTH + 2, DATA_Y, DATA_HEIGHT, currentTheme.divider);
-  
-  // Divider above seismograph
-  tft.drawFastHLine(0, SEISMO_Y - 4, SCREEN_WIDTH, currentTheme.border);
-  
+
+  drawHeader();
   drawDataPanel();
   drawMap();
   drawSeismograph();
+
+  // Frame lines drawn LAST — drawMap()'s edge-mask paints background over
+  // anything beneath the map border, so re-assert the dividers on top.
+  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);                 // under header
+  tft.drawFastVLine(DATA_X + DATA_WIDTH + 3, DATA_Y, DATA_HEIGHT, currentTheme.divider); // data | map
+  tft.drawFastHLine(0, SEISMO_Y - 3, SCREEN_WIDTH, currentTheme.border);                 // above seismograph
 }
 
 void drawSeismograph() {
@@ -892,8 +991,8 @@ void drawMap() {
       if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) continue;
       
       uint16_t color = getMagnitudeColor(recentQuakes[i].mag);
-      int radius = (recentQuakes[i].mag >= 6.0) ? 2 : 1;
-
+      int radius = (recentQuakes[i].mag >= 6.0) ? 3 : ((recentQuakes[i].mag >= 5.0) ? 2 : 1);
+      
       tft.fillCircle(x, y, radius, color);
     }
   }
@@ -904,19 +1003,21 @@ void drawMap() {
     int y = mapLatToScreen(latestQuake.latitude);
     
     if (x >= MAP_X && x <= MAP_X + MAP_WIDTH && y >= MAP_Y && y <= MAP_Y + MAP_HEIGHT) {
-      tft.fillCircle(x, y, 2, currentTheme.dataLatest);
-      tft.drawCircle(x, y, 3, currentTheme.dataLatest);
+      tft.fillCircle(x, y, 3, currentTheme.dataLatest);
+      tft.drawCircle(x, y, 4, currentTheme.dataLatest);
+      tft.drawCircle(x, y, 5, currentTheme.dataLatest);
     }
   }
-
+  
   // Highlight HIGHEST 24H quake location - strongest event in 24h
   if (highestRegionalQuake.isValid) {
     int x = mapLonToScreen(highestRegionalQuake.longitude);
     int y = mapLatToScreen(highestRegionalQuake.latitude);
-
+    
     if (x >= MAP_X && x <= MAP_X + MAP_WIDTH && y >= MAP_Y && y <= MAP_Y + MAP_HEIGHT) {
-      tft.fillCircle(x, y, 2, currentTheme.dataHighest);
-      tft.drawCircle(x, y, 3, currentTheme.dataHighest);
+      tft.fillCircle(x, y, 3, currentTheme.dataHighest);
+      tft.drawCircle(x, y, 4, currentTheme.dataHighest);
+      tft.drawCircle(x, y, 5, currentTheme.dataHighest);
     }
   }
 
@@ -970,14 +1071,14 @@ void triggerSeismicEvent(float quakeLat, float quakeLon, float mag) {
   float displaySurf = displayP * (surfTime / pTime);   // preserves real P:Surf ratio
 
   // Amplitude: Richter-style scaled to pixel range (exaggerated for visual drama).
-  float halfH   = (SEISMO_HEIGHT / 2) + 8;  // allows wave to reach panel edges on big quakes
+  float halfH   = (SEISMO_HEIGHT / 2) + 6;  // allows wave to clip edges on big quakes
   float rawAmp  = pow(10.0f, 0.8f * mag)        / distKm;
-  float refAmp  = pow(10.0f, 0.8f * 4.0f)       / 150.0f;  // reference: M4 at 150km fills ~40%
-  float scaled  = constrain((rawAmp / refAmp) * halfH * 1.6f, 7.0f, (float)halfH);
+  float refAmp  = pow(10.0f, 0.8f * 5.0f)       / 200.0f;
+  float scaled  = constrain((rawAmp / refAmp) * halfH * 1.2f, 3.0f, (float)halfH);
 
-  seismoPAmp    = scaled * 0.50f;   // P-waves are smallest
-  seismoSAmp    = scaled * 1.00f;   // S-waves intermediate
-  seismoSurfAmp = scaled * 1.50f;   // Surface waves largest — can rail the display
+  seismoPAmp    = scaled * 0.45f;   // P-waves are smallest
+  seismoSAmp    = scaled * 0.90f;   // S-waves intermediate
+  seismoSurfAmp = scaled * 1.30f;   // Surface waves largest
 
   unsigned long now = millis();
   seismoPWaveStart = now + (unsigned long)(displayP    * 1000.0f);
@@ -1008,10 +1109,8 @@ void animateSeismograph() {
   switch (seismoPhase) {
 
     case SEISMO_QUIET:
-      // Continuous microseismic tremor — two overlapping slow sinusoids + jitter
-      displacement = (int)(3.5f * sin(2.0f * PI * 0.13f * t) +
-                           2.0f * sin(2.0f * PI * 0.37f * t) +
-                           (random(100) < 35 ? random(-2, 3) : 0));
+      // Microseismic background noise
+      displacement = (random(100) < 15) ? random(-5, 6) : 0;
       break;
 
     case SEISMO_P_WAVE: {
@@ -1030,7 +1129,6 @@ void animateSeismograph() {
       float duration = max((float)(seismoSurfStart - seismoSWaveStart) / 1000.0f, 0.5f);
       float env = sin(PI * elapsed / duration);
       displacement = (int)(seismoSAmp * env * sin(2.0f * PI * 3.0f * t));
-      displacement += random(-2, 3);
       break;
     }
 
@@ -2009,17 +2107,17 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(magColor);
   int htw = tft.textWidth("EQ DETECTED");
-  int htx = 120 - htw / 2;
+  int htx = 160 - htw / 2;
   tft.setCursor(htx, 17);
   tft.print("EQ DETECTED");
   tft.fillTriangle(htx - 16, 20, htx - 10, 6, htx - 4, 20, magColor);
-  tft.fillTriangle(120 + htw / 2 + 4, 20, 120 + htw / 2 + 10, 6, 120 + htw / 2 + 16, 20, magColor);
+  tft.fillTriangle(160 + htw / 2 + 4, 20, 160 + htw / 2 + 10, 6, 160 + htw / 2 + 16, 20, magColor);
 
   // Thin divider
-  tft.drawFastHLine(5, 28, 230, currentTheme.divider);
+  tft.drawFastHLine(5, 28, 310, currentTheme.divider);
 
   // ── Radar / Target Reticle ──
-  int cx = 120;
+  int cx = 160;
   int cy = 108;
 
   // Ring count scales with magnitude
@@ -2071,18 +2169,47 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   char locBuf[64];
   strncpy(locBuf, quake->location, sizeof(locBuf) - 1);
   locBuf[sizeof(locBuf) - 1] = '\0';
-  while (strlen(locBuf) > 3 && tft.textWidth(locBuf) > 220) {
+  while (strlen(locBuf) > 3 && tft.textWidth(locBuf) > 300) {
     locBuf[strlen(locBuf) - 1] = '\0';
   }
-  tft.setCursor(120 - tft.textWidth(locBuf) / 2, dataY + 11);
+  tft.setCursor(160 - tft.textWidth(locBuf) / 2, dataY + 11);
   tft.print(locBuf);
 
   // Depth
   char depthBuf[32];
   snprintf(depthBuf, sizeof(depthBuf), "Depth: %.0fkm", quake->depth);
   tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(120 - tft.textWidth(depthBuf) / 2, dataY + 26);
+  tft.setCursor(160 - tft.textWidth(depthBuf) / 2, dataY + 26);
   tft.print(depthBuf);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ON-SCREEN SETTINGS HINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+// The config form is the web portal (already running when connected). Show how
+// to reach it; tapping anywhere (or the BOOT button) closes this screen.
+void drawSettingsScreen() {
+  showingSettings = true;
+  settingsStartTime = millis();
+
+  tft.fillScreen(currentTheme.background);
+
+  tft.setTextColor(currentTheme.textAccent);
+  tft.drawCentreString("SETTINGS", 160, 26, 4);
+
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.drawCentreString("Open in a browser on the same WiFi", 160, 74, 2);
+
+  tft.setTextColor(currentTheme.textPrimary);
+  tft.drawCentreString("http://seismonitor.local", 160, 100, 2);
+  String ip = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString()
+                                              : WiFi.softAPIP().toString();
+  tft.drawCentreString("http://" + ip, 160, 124, 2);
+
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.drawCentreString("Region / theme / alerts / sound", 160, 158, 2);
+  tft.drawCentreString("Tap to close", 160, 182, 2);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2090,8 +2217,8 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Returns true if at least one finger is currently down.
-// x/y are in native portrait coordinates (X: 0-239, Y: 0-319).
-// UI is portrait, so coords map directly — UI square is top 240×240.
+// x/y are raw FT6336G panel coordinates (native portrait frame, X:0-239 Y:0-319).
+// mapTouch() converts these to landscape screen coords for hit-testing the gear.
 bool readTouch(int16_t &x, int16_t &y) {
   Wire.beginTransmission(TOUCH_ADDR);
   Wire.write(0x02);  // TD_STATUS register
@@ -2112,6 +2239,15 @@ bool readTouch(int16_t &x, int16_t &y) {
   return true;
 }
 
+// Map raw FT6336G portrait coords to landscape screen coords (setRotation 1).
+// If the gear hit-zone lands in the wrong corner on hardware, flip these 2 lines.
+void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy) {
+  sx = ty;                                      // native Y (0-319) -> screen X
+  sy = (int16_t)(SCREEN_HEIGHT - 1 - tx);       // native X (0-239) -> screen Y (flipped)
+  sx = (int16_t)constrain((int)sx, 0, SCREEN_WIDTH - 1);
+  sy = (int16_t)constrain((int)sy, 0, SCREEN_HEIGHT - 1);
+}
+
 void handleButton() {
   if (showingAlert) return;
 
@@ -2122,32 +2258,43 @@ void handleButton() {
   bool touching = readTouch(tx, ty);
 
   // Rising edge of touch (finger just placed down)
-  if (touching && !prevTouching) {
-    if (now - lastTouchTime > DEBOUNCE_DELAY) {
-      lastTouchTime = now;
-      lastActivity  = now;
-      isRestMode    = false;
-      // Tap triggers immediate data refresh
-      checkForEarthquakes();
-      updateDataRegion();
-      updateMapEarthquakeMarkers();
-      lastAPICheck = now;
-      Serial.printf("Touch tap (%d,%d) — refreshed\n", tx, ty);
+  if (touching && !prevTouching && (now - lastTouchTime > DEBOUNCE_DELAY)) {
+    lastTouchTime = now;
+    lastActivity  = now;
+    isRestMode    = false;
+
+    if (showingSettings) {
+      showingSettings = false;          // any tap closes the settings screen
+      drawUI();
+    } else {
+      int16_t sx, sy;
+      mapTouch(tx, ty, sx, sy);
+      Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
+      if (sx < 44 && sy < 30) {
+        drawSettingsScreen();           // gear (top-left) → open settings
+      } else {
+        checkForEarthquakes();          // elsewhere → refresh data
+        updateDataRegion();
+        updateMapEarthquakeMarkers();
+        lastAPICheck = now;
+      }
     }
   }
   prevTouching = touching;
 
   // ── Physical BOOT button fallback ────────────────────────────────────────
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    if (now - lastButtonPress > DEBOUNCE_DELAY) {
-      lastButtonPress = now;
-      lastActivity    = now;
-      isRestMode      = false;
+  if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress > DEBOUNCE_DELAY)) {
+    lastButtonPress = now;
+    lastActivity    = now;
+    isRestMode      = false;
+    if (showingSettings) {
+      showingSettings = false;
+      drawUI();
+    } else {
       checkForEarthquakes();
       updateDataRegion();
       updateMapEarthquakeMarkers();
       lastAPICheck = now;
-      Serial.println("BOOT button — refreshed");
     }
   }
 }
@@ -2340,11 +2487,11 @@ void setupConfigPortal() {
   
   tft.fillScreen(currentTheme.background);
   tft.setTextColor(currentTheme.textPrimary);
-  tft.drawCentreString("SETUP MODE", 120, 75, 4);
+  tft.drawCentreString("SETUP MODE", 160, 75, 4);
 
   tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("WiFi: SeisMonitor-Setup", 120, 115, 2);
-  tft.drawCentreString("URL: 192.168.4.1", 120, 138, 2);
+  tft.drawCentreString("WiFi: SeisMonitor-Setup", 160, 115, 2);
+  tft.drawCentreString("URL: 192.168.4.1", 160, 138, 2);
   
   setupWebServer();
 }
@@ -2384,7 +2531,13 @@ void handleWebRoot() {
   if (config.fontSize == 2) html += " selected";
   html += R"(>Medium</option><option value="3")";
   if (config.fontSize == 3) html += " selected";
-  html += R"(>Large</option></select>)";
+  html += R"(>Large</option></select><label>Visual Style</label><select name="aesthetic"><option value="elegant")";
+  if (strcmp(config.aesthetic, "elegant") == 0) html += " selected";
+  html += R"(>Elegant</option><option value="contrast")";
+  if (strcmp(config.aesthetic, "contrast") == 0) html += " selected";
+  html += R"(>High Contrast</option><option value="mono")";
+  if (strcmp(config.aesthetic, "mono") == 0) html += " selected";
+  html += R"(>Monochrome</option></select>)";
 
   // Show recent quakes toggle (latest quake always remains visible)
   html += R"(<label style="margin-top:12px;display:block">Show Recent Quakes</label><input type="checkbox" name="showrecent" )";
@@ -2420,6 +2573,7 @@ void handleWebSave() {
   if (server.hasArg("region")) server.arg("region").toCharArray(config.region, sizeof(config.region));
   if (server.hasArg("magthresh")) config.magThreshold = server.arg("magthresh").toFloat();
   if (server.hasArg("fontsize")) config.fontSize = server.arg("fontsize").toInt();
+  if (server.hasArg("aesthetic")) server.arg("aesthetic").toCharArray(config.aesthetic, sizeof(config.aesthetic));
   // Checkboxes: when unchecked, browser won't send the arg, so set false by default
   if (server.hasArg("showrecent")) config.showRecentQuakes = true; else config.showRecentQuakes = false;
   if (server.hasArg("showcities")) config.showCityDots = true; else config.showCityDots = false;
