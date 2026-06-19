@@ -2342,35 +2342,105 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
 // LOCATION PICKER  (gear → choose region)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const char* REGION_VALUES[] = {"NZ", "Japan", "China", "California", "Global"};
-const char* REGION_LABELS[] = {"New Zealand", "Japan", "China", "California", "Global"};
+const char* REGION_VALUES[] = {"NZ", "Japan", "California", "China", "Global"};
+const char* REGION_LABELS[] = {"New Zealand", "Japan", "California", "China", "Global"};
 const int   REGION_COUNT    = 5;
 
-// Picker row geometry (landscape screen coords)
-const int PICK_X     = 30;
-const int PICK_W     = 260;
-const int PICK_Y0    = 34;
-const int PICK_H     = 34;
-const int PICK_PITCH = 39;
+// Region row geometry — left column of the settings screen
+const int PICK_X     = 10;
+const int PICK_W     = 140;
+const int PICK_Y0    = 48;
+const int PICK_H     = 24;
+const int PICK_PITCH = 28;
 
-// Full-screen list of regions. Tap a row to switch; tap elsewhere to cancel.
+// Settings screen — REGION rows (left) + WIFI connection details (right).
+// Tap a region to switch; tap the cog (top-right) / BOOT / 30s to close.
 void drawRegionPicker() {
   showingRegionPicker = true;
   pickerStartTime = millis();
-
   tft.fillScreen(currentTheme.background);
-  tft.setTextColor(currentTheme.textAccent);
-  tft.drawCentreString("SELECT LOCATION", 160, 10, 2);
 
+  // ── Header: ‹ SETTINGS + active cog ──
+  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textAccent);
+  tft.setCursor(8, 7);
+  tft.print("< SETTINGS");
+  drawGearIcon(GEAR_CX, GEAR_CY, currentTheme.dataLatest);   // accent = active
+
+  tft.drawFastVLine(160, HEADER_H, SCREEN_HEIGHT - HEADER_H, currentTheme.divider);
+
+  // ── LEFT: REGION ──
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.setCursor(12, 32);
+  tft.print("REGION");
   for (int i = 0; i < REGION_COUNT; i++) {
-    int y = PICK_Y0 + i * PICK_PITCH;
-    bool current = (strcmp(config.region, REGION_VALUES[i]) == 0);
-    uint16_t boxCol = current ? currentTheme.textAccent : currentTheme.divider;
-    tft.drawRoundRect(PICK_X, y, PICK_W, PICK_H, 5, boxCol);
-    if (current) tft.drawRoundRect(PICK_X + 1, y + 1, PICK_W - 2, PICK_H - 2, 5, boxCol);
-    tft.setTextColor(current ? currentTheme.textAccent : currentTheme.textPrimary);
-    tft.drawCentreString(REGION_LABELS[i], 160, y + 9, 2);
+    int y = PICK_Y0 + i * PICK_PITCH, cyc = y + PICK_H / 2;
+    bool on = (strcmp(config.region, REGION_VALUES[i]) == 0);
+    if (on) {
+      tft.fillRoundRect(PICK_X, y, PICK_W, PICK_H, 4, 0x0903);          // selected fill #0f2118
+      tft.fillRect(PICK_X, y, 2, PICK_H, currentTheme.dataLatest);      // inset accent bar
+      tft.fillCircle(PICK_X + 12, cyc, 3, currentTheme.dataLatest);     // ◉
+      tft.drawCircle(PICK_X + 12, cyc, 4, currentTheme.dataLatest);
+    } else {
+      tft.drawCircle(PICK_X + 12, cyc, 3, currentTheme.sub);            // ○
+    }
+    tft.setFreeFont(on ? FONT_DATA : FONT_LABEL);
+    tft.setTextColor(on ? currentTheme.textPrimary : currentTheme.textSecondary);
+    tft.setCursor(PICK_X + 22, cyc + 5);
+    tft.print(REGION_LABELS[i]);
   }
+
+  // ── RIGHT: WIFI CONNECTION ──
+  const int rx = 174;
+  bool conn = (WiFi.status() == WL_CONNECTED);
+  int rssi = conn ? WiFi.RSSI() : -100;
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.setCursor(rx, 32);
+  tft.print("WIFI CONNECTION");
+
+  tft.setTextColor(currentTheme.sub);
+  tft.setCursor(rx, 50);
+  tft.print("NETWORK");
+  tft.setFreeFont(FONT_DATA);
+  tft.setTextColor(currentTheme.textPrimary);
+  tft.setCursor(rx, 74);
+  char ssid[18]; strncpy(ssid, config.wifiSSID, sizeof(ssid) - 1); ssid[sizeof(ssid) - 1] = '\0';
+  tft.print(strlen(ssid) ? ssid : "--");
+
+  int bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
+  for (int i = 0; i < 4; i++) {                                         // 4 signal bars (right)
+    int bh = 3 + i * 3;
+    tft.fillRect(298 + i * 5, 62 - bh, 3, bh, (i < bars) ? currentTheme.dataLatest : currentTheme.border);
+  }
+
+  tft.drawFastHLine(rx, 82, SCREEN_WIDTH - rx - 8, currentTheme.divider);
+
+  tft.setTextFont(1);
+  int ry = 92;
+  const char* keys[3] = {"SIGNAL", "IP ADDR", "STATUS"};
+  for (int i = 0; i < 3; i++, ry += 16) {
+    tft.setTextColor(currentTheme.sub);
+    tft.setCursor(rx, ry);
+    tft.print(keys[i]);
+    String val; uint16_t vc = currentTheme.textAccent;
+    if (i == 0)      val = String(rssi) + " dBm";
+    else if (i == 1) val = conn ? WiFi.localIP().toString() : String("--");
+    else { val = conn ? "CONNECTED" : "OFFLINE"; vc = conn ? currentTheme.dataLatest : currentTheme.dataHighest; }
+    int vw = tft.textWidth(val.c_str());
+    if (i == 2) tft.fillCircle(SCREEN_WIDTH - 8 - vw - 6, ry + 3, 2, vc);   // status dot
+    tft.setTextColor(vc);
+    tft.setCursor(SCREEN_WIDTH - 8 - vw, ry);
+    tft.print(val);
+  }
+
+  // ── Footer hint ──
+  tft.drawFastHLine(0, SCREEN_HEIGHT - 16, SCREEN_WIDTH, currentTheme.border);
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.sub);
+  tft.drawCentreString("TAP REGION TO SWITCH    TAP GEAR TO CLOSE", 160, SCREEN_HEIGHT - 11, 1);
 }
 
 // Returns picker row 0..4 under a screen point, or -1 if none.
@@ -2462,8 +2532,9 @@ void handleButton() {
 
     if (showingRegionPicker) {
       int picked = regionAtPoint(sx, sy);
-      if (picked >= 0) selectRegion(picked);             // chose a region
-      else { showingRegionPicker = false; drawUI(); }    // tapped outside → cancel
+      if (picked >= 0) selectRegion(picked);                                   // chose a region
+      else if (sx > 280 && sy < 30) { showingRegionPicker = false; drawUI(); } // cog closes
+      // else: ignore taps elsewhere on the settings screen
     } else if (sx > 280 && sy < 30) {
       drawRegionPicker();                                // gear (top-right) → location picker
     } else {
