@@ -897,7 +897,7 @@ void drawHeader() {
   tft.fillCircle(7, 10, 1, acc);
   tft.setTextColor(acc);
   tft.setCursor(14, 7);
-  tft.print("SEIS ");
+  tft.print("SEISMONITOR ");
   int dx = tft.getCursorX();
   tft.fillCircle(dx + 1, 11, 1, acc);                 // · separator
   tft.setCursor(dx + 4, 7);
@@ -1151,18 +1151,15 @@ void drawRings() {
   tft.drawFastVLine(MAP_CX, MAP_CY - 6, 13, currentTheme.textSecondary);
 }
 
-// Epicentre marker: dotted bearing line from centre + a concentric target ring.
-void drawMarker(float lat, float lon, uint16_t col, int rOuter) {
+// Epicentre marker — a target ring sized by magnitude, with the core dot
+// sitting directly on the (projected) location. No bearing line.
+void drawMarker(float lat, float lon, uint16_t col, float mag) {
   int x = mapLonToScreen(lon), y = mapLatToScreen(lat);
   if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) return;
-  int steps = max(abs(x - MAP_CX), abs(y - MAP_CY));
-  for (int s = 0; s <= steps; s += 3) {                 // dotted bearing line
-    int px = MAP_CX + s * (x - MAP_CX) / max(steps, 1);
-    int py = MAP_CY + s * (y - MAP_CY) / max(steps, 1);
-    tft.drawPixel(px, py, col);
-  }
-  tft.drawCircle(x, y, rOuter, col);
-  tft.fillCircle(x, y, 2, col);
+  int r = constrain(4 + (int)mag, 4, 12);   // ring radius reflects magnitude
+  tft.drawCircle(x, y, r, col);
+  tft.drawCircle(x, y, r - 1, col);          // 2px ring for visibility
+  tft.fillCircle(x, y, 2, col);              // core dot on the location
 }
 
 void drawMap() {
@@ -1188,9 +1185,9 @@ void drawMap() {
       }
     }
     if (latestQuake.isValid)
-      drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, 5);
+      drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, latestQuake.magnitude);
     if (highestRegionalQuake.isValid)
-      drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, 4);
+      drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, highestRegionalQuake.magnitude);
   }
 
   // Mask coastline/marker bleed outside the map panel
