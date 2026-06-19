@@ -91,34 +91,37 @@ const int HTTP_TIMEOUT = 5000;                      // 5 seconds
 const byte DNS_PORT = 53;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DISPLAY LAYOUT — Landscape 320×240: data left, large map right, seismo bottom
+// DISPLAY LAYOUT — Landscape 320×240 (soft-HUD handoff): data + seismo left,
+// full-height rings map right.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const int HEADER_H = 20;
+const int HEADER_H = 22;
+const int COL_W    = 116;                        // left zone width; 1px divider at x=116
 
-// Left column - Data readouts (LATEST + 24H HIGH stacked)
-const int DATA_X = 3;
-const int DATA_Y = HEADER_H + 2;                 // 22
-const int DATA_WIDTH = 112;                      // wide enough for proper location text
-const int DATA_HEIGHT = 158;                     // down to the seismograph divider (22..180)
-
-// Right area - Map (fills the remaining width)
-const int MAP_X = 122;
-const int MAP_Y = DATA_Y;                        // 22
-const int MAP_WIDTH = 195;                       // 122..317
-const int MAP_HEIGHT = DATA_HEIGHT;              // 158
-
-// Bottom strip - seismograph background area (edge to edge)
-const int SEISMO_HEIGHT = 54;
-const int SEISMO_Y = SCREEN_HEIGHT - SEISMO_HEIGHT - 2;       // 184
-const int SEISMO_X = 0;
-const int SEISMO_WIDTH = SCREEN_WIDTH;                        // 320 — full width
-const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);  // 211
+// Left zone — seismograph (top) + data stack (below)
+const int SEISMO_X = 6;
+const int SEISMO_Y = 26;
+const int SEISMO_WIDTH = 110;
+const int SEISMO_HEIGHT = 40;                    // 26..66
+const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);  // 46
 const int SEISMO_MAX_AMPLITUDE = 50;
+const int SEISMO_LINE_X = SEISMO_X;              // trace fills the box
+const int SEISMO_LINE_W = SEISMO_WIDTH;
 
-// Trace spans the full screen width, edge to edge
-const int SEISMO_LINE_W = SCREEN_WIDTH;                       // 320 px
-const int SEISMO_LINE_X = 0;
+const int DATA_X = 10;
+const int DATA_Y = 72;                           // below the seismograph
+const int DATA_WIDTH = 100;
+const int DATA_HEIGHT = SCREEN_HEIGHT - DATA_Y;  // 168 (72..240)
+
+// Map / rings zone — fills the entire right side, full height
+const int MAP_X = COL_W + 2;                     // 118
+const int MAP_Y = HEADER_H;                      // 22
+const int MAP_WIDTH = SCREEN_WIDTH - MAP_X;      // 202
+const int MAP_HEIGHT = SCREEN_HEIGHT - MAP_Y;    // 218
+const int MAP_CX = MAP_X + MAP_WIDTH / 2;        // 219 — rings + projection centre
+const int MAP_CY = MAP_Y + MAP_HEIGHT / 2;       // 131
+const int MAP_BOX_W = 152;                       // coastline projection box
+const int MAP_BOX_H = 192;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REGIONAL BOUNDARIES
@@ -168,6 +171,11 @@ struct Theme {
   uint16_t mapLand;    // Land fill colour
   uint16_t dataLatest;  // LATEST earthquake data + map marker
   uint16_t dataHighest; // HIGHEST 24h data + map marker
+  uint16_t sub;        // deepest muted green — ticks, distance labels, footnotes
+  uint16_t ring1;      // concentric distance rings, faint -> less faint
+  uint16_t ring2;
+  uint16_t ring3;
+  uint16_t ring4;
 };
 
 struct Config {
@@ -258,8 +266,33 @@ String lastTriggeredQuakeID = "";
 // THEME DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Soft HUD — the chosen aesthetic (desaturated phosphor green) ──
+Theme createSoftHUDTheme() {
+  Theme t = {};
+  t.background    = 0x0041;  // #03080a near-black cool green
+  t.border        = 0x08C2;  // #0e1a16 rule
+  t.divider       = 0x08C2;  // #0e1a16 rule
+  t.textPrimary   = 0xBF38;  // #b8e6c4 ink — place names
+  t.textSecondary = 0x4C4D;  // #4a8a68 secondary — meta labels
+  t.textAccent    = 0x7EB3;  // #7fd69a primary — status, header, trace
+  t.seismoLine    = 0x7EB3;  // #7fd69a primary
+  t.seismoGrid    = 0x08E2;  // #0e1c17 ring1
+  t.mapOutline    = 0x0588;  // #00b347 BRIGHT NZ coastline
+  t.mapCity       = 0x7EB3;  // #7fd69a primary
+  t.mapOcean      = 0x0041;  // #03080a bg
+  t.mapLand       = 0x08C2;  // #0c1813 land fill
+  t.dataLatest    = 0x9F56;  // #9de8b2 latest accent
+  t.dataHighest   = 0xD751;  // #d4e88a 24h-high accent
+  t.sub           = 0x32C9;  // #355a48 sub
+  t.ring1         = 0x0820;  // softer — concentric rings, faint -> less faint
+  t.ring2         = 0x0841;
+  t.ring3         = 0x10A2;
+  t.ring4         = 0x18E3;
+  return t;
+}
+
 Theme createElegantTheme() {
-  Theme t;
+  Theme t = {};
   t.background = TFT_BLACK;
   t.border = 0x2104;
   t.divider = 0x2104;
@@ -278,7 +311,7 @@ Theme createElegantTheme() {
 }
 
 Theme createContrastTheme() {
-  Theme t;
+  Theme t = {};
   t.background = TFT_BLACK;
   t.border = 0x2945;
   t.divider = 0x4208;
@@ -297,7 +330,7 @@ Theme createContrastTheme() {
 }
 
 Theme createMonoTheme() {
-  Theme t;
+  Theme t = {};
   t.background = TFT_BLACK;
   t.border = 0x4208;
   t.divider = 0x4208;
@@ -316,9 +349,10 @@ Theme createMonoTheme() {
 }
 
 Theme loadTheme(const char* aesthetic) {
+  if (strcmp(aesthetic, "elegant") == 0) return createElegantTheme();
   if (strcmp(aesthetic, "contrast") == 0) return createContrastTheme();
   if (strcmp(aesthetic, "mono") == 0) return createMonoTheme();
-  return createElegantTheme();
+  return createSoftHUDTheme();   // default — the chosen aesthetic
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -398,29 +432,37 @@ bool isUsingNZAPI(const char* region) {
 // MAP PROJECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Equal-aspect projection: same pixels-per-degree for lat and lon,
-// result centred within the MAP panel so shapes aren't squished.
-static void getMapAspect(const RegionBounds& db,
-                         float& scale, float& offX, float& offY) {
+// Equal-aspect projection with cos(lat) longitude correction, fitted to a
+// MAP_BOX_W×MAP_BOX_H box centred on (MAP_CX, MAP_CY). Mirrors NZ_PROJECT()
+// in the design handoff so coastline and markers share one transform.
+static void getMapProj(const RegionBounds& db, float& scale,
+                       float& offX, float& offY, float& cosLat) {
   float latSpan = db.latMax - db.latMin;
   float lonSpan = db.lonMax - db.lonMin;
-  scale = min((float)MAP_WIDTH / lonSpan, (float)MAP_HEIGHT / latSpan);
-  offX  = (MAP_WIDTH  - scale * lonSpan) * 0.5f;
-  offY  = (MAP_HEIGHT - scale * latSpan) * 0.5f;
+  float cLat = (db.latMin + db.latMax) * 0.5f;
+  cosLat = cosf(cLat * 0.01745329f);
+  float effLon = lonSpan * cosLat;
+  const float m = 8.0f;                          // inner margin
+  float innerW = MAP_BOX_W - 2 * m, innerH = MAP_BOX_H - 2 * m;
+  scale = min(innerW / effLon, innerH / latSpan);
+  offX  = m + (innerW - scale * effLon)  * 0.5f;
+  offY  = m + (innerH - scale * latSpan) * 0.5f;
 }
 
 int mapLatToScreen(float lat) {
   RegionBounds db = getRegionBounds(config.region);
-  float scale, offX, offY;
-  getMapAspect(db, scale, offX, offY);
-  return MAP_Y + (int)(offY + (db.latMax - lat) / (db.latMax - db.latMin) * scale * (db.latMax - db.latMin));
+  float scale, offX, offY, cosLat;
+  getMapProj(db, scale, offX, offY, cosLat);
+  int gy = MAP_CY - MAP_BOX_H / 2;
+  return gy + (int)(offY + (db.latMax - lat) * scale);
 }
 
 int mapLonToScreen(float lon) {
   RegionBounds db = getRegionBounds(config.region);
-  float scale, offX, offY;
-  getMapAspect(db, scale, offX, offY);
-  return MAP_X + (int)(offX + (lon - db.lonMin) / (db.lonMax - db.lonMin) * scale * (db.lonMax - db.lonMin));
+  float scale, offX, offY, cosLat;
+  getMapProj(db, scale, offX, offY, cosLat);
+  int gx = MAP_CX - MAP_BOX_W / 2;
+  return gx + (int)(offX + (lon - db.lonMin) * scale * cosLat);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -498,6 +540,39 @@ void handleWebNotFound();
 void handleTestSound();
 void handleTestQuake();
 void playStartupRumble();
+void syncTimezone();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TIMEZONE — NZ default (DST-aware) + geo-IP auto-detect of the actual offset
+// ═══════════════════════════════════════════════════════════════════════════
+
+void syncTimezone() {
+  // Reliable fallback: New Zealand (NZST-12 / NZDT-13, DST handled automatically)
+  setenv("TZ", "NZST-12NZDT,M9.5.0,M4.1.0/3", 1);
+  tzset();
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Auto-detect the connection's current UTC offset (incl. DST) via geo-IP.
+  HTTPClient http;
+  http.begin("http://ip-api.com/json/?fields=status,offset,timezone");
+  http.setTimeout(4000);
+  if (http.GET() == 200) {
+    JsonDocument doc;
+    if (!deserializeJson(doc, http.getString()) &&
+        strcmp(doc["status"] | "", "success") == 0) {
+      long off = doc["offset"] | (long)0;            // seconds east of UTC
+      long ah = off / 3600, am = labs(off % 3600) / 60;
+      char tz[24];
+      if (am) snprintf(tz, sizeof(tz), "GMT%+ld:%02ld", -ah, am);   // POSIX sign inverted
+      else    snprintf(tz, sizeof(tz), "GMT%+ld", -ah);
+      setenv("TZ", tz, 1);
+      tzset();
+      Serial.printf("TZ auto: %s offset=%lds -> %s\n",
+                    (const char*)(doc["timezone"] | "?"), off, tz);
+    }
+  }
+  http.end();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -521,7 +596,7 @@ void setup() {
   Serial.println("══════════════════════════════\n");
 
   loadConfig();
-  currentTheme = createElegantTheme();  // Always dark mode
+  currentTheme = createSoftHUDTheme();  // Soft HUD — the chosen aesthetic
 
   tft.init();
   tft.setRotation(1);      // Landscape — 320×240 (native 240×320 panel rotated)
@@ -581,6 +656,8 @@ void setup() {
     delay(500);
     ttries++;
   }
+
+  syncTimezone();   // NZ default + geo-IP auto-detect of the local offset
 
   setupWebServer();
   
@@ -730,46 +807,63 @@ void drawWrappedText(const char* text, int startX, int startY, int maxWidth, int
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Settings gear centre (top-left corner) — also the touch hit target.
-const int GEAR_CX = 13;
-const int GEAR_CY = 9;
+const int GEAR_CX = 308;   // settings cog — header right corner (also touch target)
+const int GEAR_CY = 10;
 
-// Small gear/cog icon centred at (cx,cy).
+// Small gear/cog icon centred at (cx,cy): solid disc, rim notched into teeth,
+// hollow hub. Reads as a clean cog at ~16px (vs. the old radial spikes).
 void drawGearIcon(int cx, int cy, uint16_t color) {
-  for (int a = 0; a < 360; a += 45) {
-    float r = a * 0.01745329f;
-    int x0 = cx + (int)(cosf(r) * 4), y0 = cy + (int)(sinf(r) * 4);
-    int x1 = cx + (int)(cosf(r) * 8), y1 = cy + (int)(sinf(r) * 8);
-    tft.drawLine(x0, y0,     x1, y1,     color);
-    tft.drawLine(x0, y0 + 1, x1, y1 + 1, color);   // 2px teeth
+  tft.fillCircle(cx, cy, 7, color);
+  for (int a = 0; a < 360; a += 45) {            // carve 8 notches between teeth
+    float r = (a + 22.5f) * 0.01745329f;
+    tft.fillCircle(cx + (int)(cosf(r) * 7), cy + (int)(sinf(r) * 7), 2, currentTheme.background);
   }
-  tft.fillCircle(cx, cy, 5, color);
+  tft.drawCircle(cx, cy, 4, currentTheme.background);   // hub ring
   tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole
 }
 
-// Top status bar — settings gear (left), centred title, live WiFi bars (right).
+// Header — ◉ SEIS · REGION (left), HH:MM · WIFI + cog (right). Soft-HUD, mono.
 void drawHeader() {
   tft.fillRect(0, 0, SCREEN_WIDTH, HEADER_H - 1, currentTheme.background);
   tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);
+  tft.setTextFont(1);
 
-  // Settings gear (top-left corner) — tap to open settings
-  drawGearIcon(GEAR_CX, GEAR_CY, currentTheme.textSecondary);
+  // ── Left: ◉ SEIS · <REGION> (primary) ──
+  uint16_t acc = currentTheme.textAccent;
+  tft.drawCircle(7, 10, 3, acc);
+  tft.fillCircle(7, 10, 1, acc);
+  tft.setTextColor(acc);
+  tft.setCursor(14, 7);
+  tft.print("SEIS ");
+  int dx = tft.getCursorX();
+  tft.fillCircle(dx + 1, 11, 1, acc);                 // · separator
+  tft.setCursor(dx + 4, 7);
+  tft.print(config.region);
 
-  // Title (centred)
-  tft.setFreeFont(FONT_LABEL);
-  tft.setTextColor(currentTheme.textAccent);
-  int tw = tft.textWidth("SEISMONITOR");
-  tft.setCursor(SCREEN_WIDTH / 2 - tw / 2, 14);
-  tft.print("SEISMONITOR");
+  // ── Right: HH:MM · WIFI + cog (secondary) ──
+  uint16_t sec = currentTheme.textSecondary;
+  drawGearIcon(GEAR_CX, GEAR_CY, sec);
 
-  // WiFi signal bars (right) — 3 ascending bars, filled by RSSI strength
-  int rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
-  int bars = rssi > -60 ? 3 : rssi > -72 ? 2 : rssi > -85 ? 1 : 0;
-  for (int i = 0; i < 3; i++) {
-    int bh = 4 + i * 3;
-    int bx = SCREEN_WIDTH - 24 + i * 6;
-    int by = 4 + (10 - bh);
-    tft.fillRect(bx, by, 4, bh, (i < bars) ? currentTheme.textAccent : currentTheme.seismoGrid);
+  char clk[8];
+  time_t tnow = time(nullptr);
+  if (tnow > 1600000000) {
+    struct tm lt; localtime_r(&tnow, &lt);
+    snprintf(clk, sizeof(clk), "%02d:%02d", lt.tm_hour, lt.tm_min);
+  } else {
+    strcpy(clk, "--:--");
   }
+  uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? sec : currentTheme.sub;
+  int xc = GEAR_CX - 8 - 6;                            // just left of the cog
+  int wW = tft.textWidth("WIFI");
+  tft.setTextColor(wifiCol);
+  tft.setCursor(xc - wW, 7);
+  tft.print("WIFI");
+  int dotx = xc - wW - 5;
+  tft.fillCircle(dotx, 11, 1, sec);                   // · separator
+  int cW = tft.textWidth(clk);
+  tft.setTextColor(sec);
+  tft.setCursor(dotx - 4 - cW, 7);
+  tft.print(clk);
 }
 
 void drawUI() {
@@ -780,23 +874,28 @@ void drawUI() {
   drawMap();
   drawSeismograph();
 
-  // Frame lines drawn LAST — drawMap()'s edge-mask paints background over
-  // anything beneath the map border, so re-assert the dividers on top.
-  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);                 // under header
-  tft.drawFastVLine(DATA_X + DATA_WIDTH + 3, DATA_Y, DATA_HEIGHT, currentTheme.divider); // data | map
-  tft.drawFastHLine(0, SEISMO_Y - 3, SCREEN_WIDTH, currentTheme.border);                 // above seismograph
+  // Frame lines drawn LAST — drawMap()'s edge-mask can paint over them.
+  tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);                       // under header
+  tft.drawFastVLine(COL_W, HEADER_H, SCREEN_HEIGHT - HEADER_H, currentTheme.divider);          // left | map
+  tft.drawFastHLine(SEISMO_X, SEISMO_Y + SEISMO_HEIGHT + 2, SEISMO_WIDTH, currentTheme.border); // seismo | data
 }
 
 void drawSeismograph() {
-  // Faint horizontal grid dots — only within the floating line area
-  for (int y = SEISMO_Y; y <= SEISMO_Y + SEISMO_HEIGHT; y += 10) {
+  // Faint grid dots backdrop
+  for (int y = SEISMO_Y; y <= SEISMO_Y + SEISMO_HEIGHT; y += 9) {
     for (int x = SEISMO_LINE_X; x < SEISMO_LINE_X + SEISMO_LINE_W; x += 8) {
       tft.drawPixel(x, y, currentTheme.seismoGrid);
     }
   }
 
-  // Center baseline — floating width only
-  tft.drawFastHLine(SEISMO_LINE_X, SEISMO_CENTER_Y, SEISMO_LINE_W, currentTheme.seismoGrid);
+  // Centre baseline
+  tft.drawFastHLine(SEISMO_LINE_X, SEISMO_CENTER_Y, SEISMO_LINE_W, currentTheme.sub);
+
+  // Z (top-left) · 60s (top-right) corner labels
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.sub);
+  tft.setCursor(SEISMO_X + 2, SEISMO_Y + 2);                tft.print("Z");
+  tft.setCursor(SEISMO_X + SEISMO_WIDTH - 18, SEISMO_Y + 2); tft.print("60s");
 }
 
 // Auto-sizing location text for the narrow data column.
@@ -882,149 +981,154 @@ int drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color) {
   return lines * lineH + 2;
 }
 
-void drawDataPanel() {
-  tft.fillRect(DATA_X, DATA_Y, DATA_WIDTH, DATA_HEIGHT, currentTheme.background);
+// Place name — up to 2 lines, FreeSansBold9pt (Inter-like), ink. Returns height.
+int drawPlaceName(const char* text, int x, int y, int maxW) {
+  tft.setFreeFont(FONT_DATA);
+  tft.setTextColor(currentTheme.textPrimary);
+  const int lineH = 13, base = 10;
+  int len = strlen(text), pos = 0, lines = 0;
+  char line[64];
+  while (pos < len && lines < 2) {
+    int rem = min(len - pos, 63);
+    strncpy(line, text + pos, rem); line[rem] = '\0';
+    if (tft.textWidth(line) <= maxW) {
+      tft.setCursor(x, y + lines * lineH + base); tft.print(line);
+      lines++; break;
+    }
+    int end = pos, lastSpace = -1;
+    for (int i = pos; i < len && i - pos < 63; i++) {
+      if (text[i] == ' ') lastSpace = i;
+      int seg = i + 1 - pos; strncpy(line, text + pos, seg); line[seg] = '\0';
+      if (tft.textWidth(line) > maxW) { end = (lastSpace > pos) ? lastSpace : i; break; }
+      end = i + 1;
+    }
+    int pl = end - pos; if (pl <= 0) pl = 1;
+    strncpy(line, text + pos, pl); line[pl] = '\0';
+    while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
+    tft.setCursor(x, y + lines * lineH + base); tft.print(line);
+    lines++;
+    pos = end; while (pos < len && text[pos] == ' ') pos++;
+  }
+  return lines * lineH + 2;
+}
 
-  int col = DATA_X + 3;
-  int colW = DATA_WIDTH - 6;
-  int y = DATA_Y + 4;
+// One data block: ◆ LABEL · M#.# (big mono) · place (hero) · meta. Returns next y.
+int drawDataBlock(int y, EarthquakeData &q, const char* label, uint16_t accent) {
+  int x = DATA_X;
+  tft.setTextFont(1);
+  tft.fillTriangle(x + 2, y, x + 5, y + 3, x + 2, y + 6, accent);   // ◆ diamond
+  tft.fillTriangle(x + 2, y, x - 1, y + 3, x + 2, y + 6, accent);
+  tft.setTextColor(accent);
+  tft.setCursor(x + 9, y);
+  tft.print(label);
+  y += 10;
 
-  // ── LATEST — tiny category label ────────────────
-  tft.setTextFont(1);                          // 8px bitmap — small signpost
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(col, y);
-  tft.print("LATEST");
-  y += 11;
-
-  if (latestQuake.isValid) {
-    // Hero magnitude — big and bold
-    tft.setTextColor(currentTheme.dataLatest);
-    tft.setFreeFont(FONT_DATA);                // FreeSansBold9pt — dominant
-    tft.setCursor(col, y + 12);
-    tft.print("M");
-    tft.print(latestQuake.magnitude, 1);
-    y += 17;
-
-    // Location — auto-sized wrap
-    y += drawNarrowText(latestQuake.location, col, y, colW, currentTheme.dataLatest);
-
-    // Time ago — quiet metadata
-    tft.setTextFont(1);                        // 8px bitmap — demoted
+  if (!q.isValid) {
     tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(col, y);
-    tft.print(getTimeAgo(latestQuake.timestamp));
-    tft.print(" ago");
-    y += 11;
-  } else {
-    tft.setTextFont(1);
-    tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(col, y);
-    tft.print("NO DATA");
-    y += 14;
+    tft.setCursor(x, y); tft.print("NO DATA");
+    return y + 12;
   }
 
-  // ── Divider ──────────────────────────────────────
-  y += 3;
-  tft.drawFastHLine(col, y, colW, currentTheme.divider);
-  y += 6;
+  char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
+  tft.setTextColor(accent);
+  tft.drawString(m, x, y, 4);                  // Font 4 — big number
+  y += 27;
 
-  // ── 24H HIGH — tiny category label ──────────────
-  tft.setTextFont(1);                          // 8px bitmap — small signpost
+  y += drawPlaceName(q.location, x, y, DATA_WIDTH);
+
+  String ago = getTimeAgo(q.timestamp); ago.toUpperCase();
+  tft.setTextFont(1);
   tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(col, y);
-  tft.print("24H HIGH");
-  y += 11;
+  tft.setCursor(x, y);
+  tft.print(ago); tft.print(" AGO ");
+  int mx = tft.getCursorX();
+  tft.fillCircle(mx + 1, y + 3, 1, currentTheme.textSecondary);     // · separator
+  char dep[10]; snprintf(dep, sizeof(dep), "%.0fKM", q.depth);
+  tft.setCursor(mx + 4, y);
+  tft.print(dep);
+  return y + 10;
+}
 
-  if (highestRegionalQuake.isValid) {
-    // Hero magnitude — big and bold
-    tft.setTextColor(currentTheme.dataHighest);
-    tft.setFreeFont(FONT_DATA);                // FreeSansBold9pt — dominant
-    tft.setCursor(col, y + 12);
-    tft.print("M");
-    tft.print(highestRegionalQuake.magnitude, 1);
-    y += 17;
+void drawDataPanel() {
+  tft.fillRect(0, DATA_Y, COL_W, DATA_HEIGHT, currentTheme.background);
+  int y = DATA_Y + 2;
+  y = drawDataBlock(y, latestQuake, "LATEST", currentTheme.dataLatest);
+  y += 8;
+  drawDataBlock(y, highestRegionalQuake, "24H HIGH", currentTheme.dataHighest);
+}
 
-    // Location — auto-sized wrap
-    y += drawNarrowText(highestRegionalQuake.location, col, y, colW, currentTheme.dataHighest);
-
-    // Time ago — quiet metadata
-    tft.setTextFont(1);                        // 8px bitmap — demoted
-    tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(col, y);
-    tft.print(getTimeAgo(highestRegionalQuake.timestamp));
-    tft.print(" ago");
-  } else {
-    tft.setTextFont(1);
-    tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(col, y);
-    tft.print("NO DATA");
+// Sparse dashed circle — softer than a solid ring (radar look).
+void drawDashedCircle(int cx, int cy, int r, uint16_t col) {
+  int n = (int)(6.2832f * r / 2.2f);
+  if (n < 16) n = 16;
+  for (int i = 0; i < n; i++) {
+    if ((i & 3) == 0) {                    // 1 dot on, 3 off
+      float a = (i * 6.2831853f) / n;
+      tft.drawPixel(cx + (int)(r * cosf(a)), cy + (int)(r * sinf(a)), col);
+    }
   }
 }
 
-void drawMap() {
-  // Ocean base + graticule (land fill drawn inside each regional function)
-  tft.fillRect(MAP_X, MAP_Y, MAP_WIDTH, MAP_HEIGHT, currentTheme.mapOcean);
-  drawMapGraticule(currentTheme.seismoGrid);
+// Concentric distance rings + crosshair + KM labels, centred on (MAP_CX,MAP_CY).
+void drawRings() {
+  const int rad[4] = {32, 56, 80, 100};
+  const uint16_t rc[4] = {currentTheme.ring1, currentTheme.ring2, currentTheme.ring3, currentTheme.ring4};
+  const char* lab[4] = {"100KM", "200KM", "300KM", "500KM"};
+  for (int i = 0; i < 4; i++) drawDashedCircle(MAP_CX, MAP_CY, rad[i], rc[i]);
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.sub);
+  for (int i = 0; i < 4; i++) {
+    // Stagger down the open lower-right diagonal so all four read cleanly.
+    int lx = MAP_CX + (int)(rad[i] * 0.66f);
+    int ly = MAP_CY + (int)(rad[i] * 0.74f) - 4;
+    tft.setCursor(lx, ly);
+    tft.print(lab[i]);
+  }
+  tft.drawFastHLine(MAP_CX - 6, MAP_CY, 13, currentTheme.textSecondary);
+  tft.drawFastVLine(MAP_CX, MAP_CY - 6, 13, currentTheme.textSecondary);
+}
 
-  if (strcmp(config.region, "NZ") == 0) {
-    drawNZMap();
+// Epicentre marker: dotted bearing line from centre + a concentric target ring.
+void drawMarker(float lat, float lon, uint16_t col, int rOuter) {
+  int x = mapLonToScreen(lon), y = mapLatToScreen(lat);
+  if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) return;
+  int steps = max(abs(x - MAP_CX), abs(y - MAP_CY));
+  for (int s = 0; s <= steps; s += 3) {                 // dotted bearing line
+    int px = MAP_CX + s * (x - MAP_CX) / max(steps, 1);
+    int py = MAP_CY + s * (y - MAP_CY) / max(steps, 1);
+    tft.drawPixel(px, py, col);
   }
-  else if (strcmp(config.region, "Japan") == 0) {
-    drawJapanMap();
-  }
-  else if (strcmp(config.region, "China") == 0) {
-    drawChinaMap();
-  }
-  else if (strcmp(config.region, "California") == 0) {
-    drawCaliforniaMap();
-  }
-  else {
-    drawGlobalMap();
-  }
-  
-  // Plot recent quakes (can be disabled via web settings)
+  tft.drawCircle(x, y, rOuter, col);
+  tft.fillCircle(x, y, 2, col);
+}
+
+void drawMap() {
+  tft.fillRect(MAP_X, MAP_Y, MAP_WIDTH, MAP_HEIGHT, currentTheme.mapOcean);
+  drawRings();                                          // radar rings (replaces graticule)
+
+  if      (strcmp(config.region, "NZ") == 0)         drawNZMap();
+  else if (strcmp(config.region, "Japan") == 0)      drawJapanMap();
+  else if (strcmp(config.region, "China") == 0)      drawChinaMap();
+  else if (strcmp(config.region, "California") == 0) drawCaliforniaMap();
+  else                                               drawGlobalMap();
+
+  // Recent quakes (optional, faint)
   if (config.showRecentQuakes) {
     for (int i = 0; i < recentQuakeCount; i++) {
       if (!recentQuakes[i].valid) continue;
-      
       int x = mapLonToScreen(recentQuakes[i].lon);
       int y = mapLatToScreen(recentQuakes[i].lat);
-      
       if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) continue;
-      
-      uint16_t color = getMagnitudeColor(recentQuakes[i].mag);
-      int radius = (recentQuakes[i].mag >= 6.0) ? 3 : ((recentQuakes[i].mag >= 5.0) ? 2 : 1);
-      
-      tft.fillCircle(x, y, radius, color);
-    }
-  }
-  
-  // Highlight LATEST quake location (orange dot) - most recent event
-  if (latestQuake.isValid) {
-    int x = mapLonToScreen(latestQuake.longitude);
-    int y = mapLatToScreen(latestQuake.latitude);
-    
-    if (x >= MAP_X && x <= MAP_X + MAP_WIDTH && y >= MAP_Y && y <= MAP_Y + MAP_HEIGHT) {
-      tft.fillCircle(x, y, 3, currentTheme.dataLatest);
-      tft.drawCircle(x, y, 4, currentTheme.dataLatest);
-      tft.drawCircle(x, y, 5, currentTheme.dataLatest);
-    }
-  }
-  
-  // Highlight HIGHEST 24H quake location - strongest event in 24h
-  if (highestRegionalQuake.isValid) {
-    int x = mapLonToScreen(highestRegionalQuake.longitude);
-    int y = mapLatToScreen(highestRegionalQuake.latitude);
-    
-    if (x >= MAP_X && x <= MAP_X + MAP_WIDTH && y >= MAP_Y && y <= MAP_Y + MAP_HEIGHT) {
-      tft.fillCircle(x, y, 3, currentTheme.dataHighest);
-      tft.drawCircle(x, y, 4, currentTheme.dataHighest);
-      tft.drawCircle(x, y, 5, currentTheme.dataHighest);
+      tft.fillCircle(x, y, (recentQuakes[i].mag >= 6.0) ? 2 : 1, currentTheme.sub);
     }
   }
 
-  // Mask any coastline/marker bleed outside the map panel
-  // (drawLine for coastlines isn't clipped — paint over any overflow)
+  if (latestQuake.isValid)
+    drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, 5);
+  if (highestRegionalQuake.isValid)
+    drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, 4);
+
+  // Mask coastline/marker bleed outside the map panel
   tft.fillRect(MAP_X - 4, MAP_Y - 4, MAP_WIDTH + 8, 4, currentTheme.background);
   tft.fillRect(MAP_X - 4, MAP_Y + MAP_HEIGHT, MAP_WIDTH + 8, 4, currentTheme.background);
   tft.fillRect(MAP_X - 4, MAP_Y, 4, MAP_HEIGHT, currentTheme.background);
@@ -1168,12 +1272,12 @@ void animateSeismograph() {
   int eraseX = SEISMO_LINE_X + (seismoX - SEISMO_LINE_X + 3) % SEISMO_LINE_W;
   tft.fillRect(eraseX, SEISMO_Y, 2, SEISMO_HEIGHT, currentTheme.background);
 
-  // Restore grid texture in erased strip
-  for (int y = SEISMO_Y; y <= SEISMO_Y + SEISMO_HEIGHT; y += 10) {
-    for (int x = eraseX; x < eraseX + 2; x++) {
-      if ((x - SEISMO_LINE_X) % 8 == 0 && x >= SEISMO_LINE_X && x < SEISMO_LINE_X + SEISMO_LINE_W)
-        tft.drawPixel(x, y, currentTheme.seismoGrid);
-    }
+  // Restore backdrop (grid dots + centre baseline) in the erased strip
+  for (int x = eraseX; x < eraseX + 2 && x < SEISMO_LINE_X + SEISMO_LINE_W; x++) {
+    if (x < SEISMO_LINE_X) continue;
+    for (int y = SEISMO_Y; y <= SEISMO_Y + SEISMO_HEIGHT; y += 9)
+      if ((x - SEISMO_LINE_X) % 8 == 0) tft.drawPixel(x, y, currentTheme.seismoGrid);
+    tft.drawPixel(x, SEISMO_CENTER_Y, currentTheme.sub);   // keep baseline alive
   }
 
   seismoLastY = newY;
@@ -2311,8 +2415,8 @@ void handleButton() {
       int picked = regionAtPoint(sx, sy);
       if (picked >= 0) selectRegion(picked);             // chose a region
       else { showingRegionPicker = false; drawUI(); }    // tapped outside → cancel
-    } else if (sx < 44 && sy < 30) {
-      drawRegionPicker();                                // gear (top-left) → location picker
+    } else if (sx > 280 && sy < 30) {
+      drawRegionPicker();                                // gear (top-right) → location picker
     } else {
       checkForEarthquakes();                             // elsewhere → refresh data
       updateDataRegion();
