@@ -222,7 +222,7 @@ int displayMode = 0;
 bool isRestMode = false;
 bool isConfigMode = false;
 bool showingAlert = false;
-bool showingSettings = false;
+bool showingRegionPicker = false;   // gear-opened location picker
 
 
 
@@ -235,7 +235,7 @@ unsigned long lastDisplaySwitch = 0;
 unsigned long lastActivity = 0;
 unsigned long lastButtonPress = 0;
 unsigned long alertStartTime  = 0;
-unsigned long settingsStartTime = 0;
+unsigned long pickerStartTime = 0;
 unsigned long lastTouchTime   = 0;   // millis() of last confirmed tap
 bool          prevTouching    = false;
 
@@ -486,7 +486,9 @@ void drawGlobalMap();
 void animateSeismograph();
 void checkForEarthquakes();
 void displayEarthquakeAlert(EarthquakeData* quake);
-void drawSettingsScreen();
+void drawRegionPicker();
+int  regionAtPoint(int16_t sx, int16_t sy);
+void selectRegion(int idx);
 void handleButton();
 void setupConfigPortal();
 void setupWebServer();
@@ -621,9 +623,9 @@ void loop() {
     return;
   }
 
-  if (showingSettings) {
-    if (now - settingsStartTime > 30000UL) {   // auto-close after 30s
-      showingSettings = false;
+  if (showingRegionPicker) {
+    if (now - pickerStartTime > 30000UL) {   // auto-close after 30s of no choice
+      showingRegionPicker = false;
       drawUI();
       lastActivity = now;
     }
@@ -2184,32 +2186,70 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ON-SCREEN SETTINGS HINT
+// LOCATION PICKER  (gear → choose region)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// The config form is the web portal (already running when connected). Show how
-// to reach it; tapping anywhere (or the BOOT button) closes this screen.
-void drawSettingsScreen() {
-  showingSettings = true;
-  settingsStartTime = millis();
+const char* REGION_VALUES[] = {"NZ", "Japan", "China", "California", "Global"};
+const char* REGION_LABELS[] = {"New Zealand", "Japan", "China", "California", "Global"};
+const int   REGION_COUNT    = 5;
+
+// Picker row geometry (landscape screen coords)
+const int PICK_X     = 30;
+const int PICK_W     = 260;
+const int PICK_Y0    = 34;
+const int PICK_H     = 34;
+const int PICK_PITCH = 39;
+
+// Full-screen list of regions. Tap a row to switch; tap elsewhere to cancel.
+void drawRegionPicker() {
+  showingRegionPicker = true;
+  pickerStartTime = millis();
 
   tft.fillScreen(currentTheme.background);
-
   tft.setTextColor(currentTheme.textAccent);
-  tft.drawCentreString("SETTINGS", 160, 26, 4);
+  tft.drawCentreString("SELECT LOCATION", 160, 10, 2);
 
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("Open in a browser on the same WiFi", 160, 74, 2);
+  for (int i = 0; i < REGION_COUNT; i++) {
+    int y = PICK_Y0 + i * PICK_PITCH;
+    bool current = (strcmp(config.region, REGION_VALUES[i]) == 0);
+    uint16_t boxCol = current ? currentTheme.textAccent : currentTheme.divider;
+    tft.drawRoundRect(PICK_X, y, PICK_W, PICK_H, 5, boxCol);
+    if (current) tft.drawRoundRect(PICK_X + 1, y + 1, PICK_W - 2, PICK_H - 2, 5, boxCol);
+    tft.setTextColor(current ? currentTheme.textAccent : currentTheme.textPrimary);
+    tft.drawCentreString(REGION_LABELS[i], 160, y + 9, 2);
+  }
+}
 
-  tft.setTextColor(currentTheme.textPrimary);
-  tft.drawCentreString("http://seismonitor.local", 160, 100, 2);
-  String ip = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString()
-                                              : WiFi.softAPIP().toString();
-  tft.drawCentreString("http://" + ip, 160, 124, 2);
+// Returns picker row 0..4 under a screen point, or -1 if none.
+int regionAtPoint(int16_t sx, int16_t sy) {
+  if (sx < PICK_X || sx > PICK_X + PICK_W) return -1;
+  for (int i = 0; i < REGION_COUNT; i++) {
+    int y = PICK_Y0 + i * PICK_PITCH;
+    if (sy >= y && sy <= y + PICK_H) return i;
+  }
+  return -1;
+}
 
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("Region / theme / alerts / sound", 160, 158, 2);
-  tft.drawCentreString("Tap to close", 160, 182, 2);
+// Apply a chosen region: persist it, clear stale data, reload, return to main UI.
+void selectRegion(int idx) {
+  if (idx < 0 || idx >= REGION_COUNT) return;
+  strncpy(config.region, REGION_VALUES[idx], sizeof(config.region) - 1);
+  config.region[sizeof(config.region) - 1] = '\0';
+  saveConfig();
+
+  showingRegionPicker = false;
+  lastQuakeID = "";                 // force a fresh "latest" detection for the new region
+  lastTriggeredQuakeID = "";
+  latestQuake.clear();
+  highestRegionalQuake.clear();
+  recentQuakeCount = 0;
+
+  drawUI();                         // immediate redraw (new map) confirms the choice
+  checkForEarthquakes();            // then pull the new region's quakes
+  updateDataRegion();
+  updateMapEarthquakeMarkers();
+  lastAPICheck = millis();
+  lastActivity = millis();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2263,21 +2303,21 @@ void handleButton() {
     lastActivity  = now;
     isRestMode    = false;
 
-    if (showingSettings) {
-      showingSettings = false;          // any tap closes the settings screen
-      drawUI();
+    int16_t sx, sy;
+    mapTouch(tx, ty, sx, sy);
+    Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
+
+    if (showingRegionPicker) {
+      int picked = regionAtPoint(sx, sy);
+      if (picked >= 0) selectRegion(picked);             // chose a region
+      else { showingRegionPicker = false; drawUI(); }    // tapped outside → cancel
+    } else if (sx < 44 && sy < 30) {
+      drawRegionPicker();                                // gear (top-left) → location picker
     } else {
-      int16_t sx, sy;
-      mapTouch(tx, ty, sx, sy);
-      Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
-      if (sx < 44 && sy < 30) {
-        drawSettingsScreen();           // gear (top-left) → open settings
-      } else {
-        checkForEarthquakes();          // elsewhere → refresh data
-        updateDataRegion();
-        updateMapEarthquakeMarkers();
-        lastAPICheck = now;
-      }
+      checkForEarthquakes();                             // elsewhere → refresh data
+      updateDataRegion();
+      updateMapEarthquakeMarkers();
+      lastAPICheck = now;
     }
   }
   prevTouching = touching;
@@ -2287,8 +2327,8 @@ void handleButton() {
     lastButtonPress = now;
     lastActivity    = now;
     isRestMode      = false;
-    if (showingSettings) {
-      showingSettings = false;
+    if (showingRegionPicker) {
+      showingRegionPicker = false;
       drawUI();
     } else {
       checkForEarthquakes();
