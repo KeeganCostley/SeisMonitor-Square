@@ -580,6 +580,56 @@ void syncTimezone() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LOADING / BOOT SCREEN — pulsing glyph, status line, scan bar (soft HUD)
+// ═══════════════════════════════════════════════════════════════════════════
+
+void drawLoadingScreen(const char* status, int frame) {
+  static char lastStatus[24] = "";
+  bool full = (strcmp(lastStatus, status) != 0);          // full redraw on status change
+  if (full) {
+    strncpy(lastStatus, status, sizeof(lastStatus) - 1);
+    lastStatus[sizeof(lastStatus) - 1] = '\0';
+    tft.fillScreen(currentTheme.background);
+    tft.setTextColor(currentTheme.textPrimary);
+    tft.drawCentreString("SEISMONITOR", 160, 116, 4);
+    tft.setTextFont(1);
+    tft.setTextColor(currentTheme.textSecondary);
+    tft.drawCentreString("EARTHQUAKE MONITOR", 160, 146, 1);
+    tft.setTextColor(currentTheme.textAccent);
+    tft.drawCentreString(status, 160, 172, 1);
+    tft.setTextColor(currentTheme.sub);
+    tft.drawString("v3.0", 8, 228, 1);
+    tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
+  }
+
+  // Pulsing glyph — two staggered expanding rings + bright core
+  const int cx = 160, cy = 66;
+  tft.fillRect(cx - 32, cy - 32, 64, 64, currentTheme.background);
+  for (int k = 0; k < 2; k++) {
+    int rr = 8 + ((frame * 2 + k * 11) % 22);
+    tft.drawCircle(cx, cy, rr, currentTheme.ring4);
+  }
+  tft.drawCircle(cx, cy, 7, currentTheme.dataLatest);
+  tft.fillCircle(cx, cy, 3, currentTheme.dataLatest);
+
+  // Animated dots after the status text
+  tft.setTextFont(1);
+  int sw = tft.textWidth(status);
+  tft.fillRect(160 + sw / 2 + 2, 170, 26, 10, currentTheme.background);
+  tft.setTextColor(currentTheme.dataLatest);
+  tft.setCursor(160 + sw / 2 + 4, 172);
+  for (int i = 0, nd = frame % 4; i < nd; i++) tft.print(".");
+
+  // Indeterminate scan bar
+  const int bx = 160 - 75, bw = 150;
+  tft.fillRect(bx, 192, bw, 2, currentTheme.divider);
+  const int sweep = 48;
+  int sx = bx + ((frame * 9) % (bw + sweep)) - sweep;
+  int x0 = max(sx, bx), x1 = min(sx + sweep, bx + bw);
+  if (x1 > x0) tft.fillRect(x0, 192, x1 - x0, 2, currentTheme.dataLatest);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SETUP
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -625,50 +675,43 @@ void setup() {
     return;
   }
   
-  tft.setTextColor(currentTheme.textPrimary);
-  tft.drawCentreString("SEISMONITOR", 160, 100, 4);
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("Connecting...", 160, 132, 2);
-  
   WiFi.mode(WIFI_STA);
   WiFi.begin(config.wifiSSID, config.wifiPassword);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+
+  int frame = 0;
+  while (WiFi.status() != WL_CONNECTED && frame < 200) {   // animated, ~20s
+    drawLoadingScreen("CONNECTING TO WIFI", frame);
+    delay(100);
+    frame++;
   }
-  
+
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("\nWiFi failed - setup mode");
     isConfigMode = true;
     setupConfigPortal();
     return;
   }
-  
+
   Serial.println("\nWiFi connected");
   Serial.println("IP: " + WiFi.localIP().toString());
-  
+
   if (MDNS.begin("seismonitor")) {
     Serial.println("mDNS: http://seismonitor.local");
   }
-  
-  // Sync time via NTP so earthquake timestamps (UTC epoch ms) can be interpreted
+
+  // Sync time via NTP so earthquake timestamps can be interpreted
   configTime(0, 0, "pool.ntp.org", "time.google.com");
-  int ttries = 0;
-  while (time(nullptr) < 1600000000 && ttries < 10) {
-    delay(500);
-    ttries++;
+  int f2 = 0;
+  while (time(nullptr) < 1600000000 && f2 < 60) {          // animated, ~6s
+    drawLoadingScreen("FETCHING QUAKE DATA", f2);
+    delay(100);
+    f2++;
   }
 
   syncTimezone();   // NZ default + geo-IP auto-detect of the local offset
-
   setupWebServer();
-  
-  tft.drawCentreString("Connected", 160, 155, 2);
-  delay(2000);
-  
+
+  drawLoadingScreen("FETCHING QUAKE DATA", f2);   // hold the loader through the first fetch
   checkForEarthquakes();
   drawUI();
   playStartupRumble();
