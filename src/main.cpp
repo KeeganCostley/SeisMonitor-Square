@@ -247,6 +247,9 @@ unsigned long pickerStartTime = 0;
 unsigned long lastTouchTime   = 0;   // millis() of last confirmed tap
 bool          prevTouching    = false;
 
+unsigned long lastMapPing      = 0;     // epicenter "active zone" ping animation
+bool          mapPingWasActive = false;
+
 String lastQuakeID = "";
 
 // ── SEISMOGRAPH WAVE SIMULATION STATE ───────────────────────────────────────
@@ -518,6 +521,8 @@ void drawDataPanel();
 int  drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color);
 void drawMap();
 void drawMapGraticule(uint16_t color);
+void animateMapPing();
+void updateMapEarthquakeMarkers();
 void drawHeader();
 
 void drawNZMap();
@@ -712,6 +717,20 @@ void loop() {
   if (now - lastSeismoUpdate > SEISMO_UPDATE_INTERVAL) {
     animateSeismograph();
     lastSeismoUpdate = now;
+  }
+
+  // Live epicenter ping — radiate rings for 10 min after the quake's origin time
+  {
+    time_t te = time(nullptr);
+    bool pingNow = latestQuake.isValid && te > 1600000000 && latestQuake.timestamp > 0 &&
+                   ((unsigned long)te - latestQuake.timestamp) < 600UL;
+    if (pingNow && now - lastMapPing > 240) {
+      animateMapPing();
+      lastMapPing = now;
+    } else if (!pingNow && mapPingWasActive) {
+      updateMapEarthquakeMarkers();   // window ended — clear the last ring
+    }
+    mapPingWasActive = pingNow;
   }
 
   if (now - lastAPICheck > API_POLL_INTERVAL) {
@@ -1133,6 +1152,36 @@ void drawMap() {
   tft.fillRect(MAP_X - 4, MAP_Y + MAP_HEIGHT, MAP_WIDTH + 8, 4, currentTheme.background);
   tft.fillRect(MAP_X - 4, MAP_Y, 4, MAP_HEIGHT, currentTheme.background);
   tft.fillRect(MAP_X + MAP_WIDTH, MAP_Y, 4, MAP_HEIGHT, currentTheme.background);
+}
+
+// Live "active zone" ping — for 10 min after a quake, expanding rings radiate
+// from its epicentre. A clipped viewport re-stamps the map under the rings each
+// frame so the coastline/markers stay intact (no full-screen flicker).
+void animateMapPing() {
+  if (!latestQuake.isValid) return;
+  int ex = mapLonToScreen(latestQuake.longitude);
+  int ey = mapLatToScreen(latestQuake.latitude);
+  if (ex < MAP_X || ex > MAP_X + MAP_WIDTH || ey < MAP_Y || ey > MAP_Y + MAP_HEIGHT) return;
+
+  const int R = 24;
+  int bx = max(ex - R, MAP_X), by = max(ey - R, MAP_Y);
+  int bw = min(ex + R, MAP_X + MAP_WIDTH)  - bx;
+  int bh = min(ey + R, MAP_Y + MAP_HEIGHT) - by;
+  if (bw <= 0 || bh <= 0) return;
+
+  tft.setViewport(bx, by, bw, bh, false);   // clip to box, keep absolute coords
+  drawMap();                                 // re-stamp static map (clears old rings)
+
+  unsigned long ph = millis() % 1600UL;
+  for (int k = 0; k < 2; k++) {              // two staggered expanding rings
+    float p = (float)((ph + k * 800UL) % 1600UL) / 1600.0f;
+    int r = (int)(p * R);
+    if (r >= 2)
+      tft.drawCircle(ex, ey, r, (p < 0.6f) ? currentTheme.dataLatest : currentTheme.textSecondary);
+  }
+  tft.fillCircle(ex, ey, 2, currentTheme.dataLatest);   // bright core
+
+  tft.resetViewport();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
