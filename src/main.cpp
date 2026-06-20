@@ -1155,15 +1155,25 @@ void drawRings() {
   tft.drawFastVLine(MAP_CX, MAP_CY - 6, 13, currentTheme.textSecondary);
 }
 
-// Epicentre marker — a target ring sized by magnitude, with the core dot
-// sitting directly on the (projected) location. No bearing line.
+// Epicentre marker — a target ring sized by magnitude with the core dot on the
+// (projected) location, plus an M-value tag that ties it to the data block.
 void drawMarker(float lat, float lon, uint16_t col, float mag) {
   int x = mapLonToScreen(lon), y = mapLatToScreen(lat);
   if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) return;
-  int r = constrain(4 + (int)mag, 4, 12);   // ring radius reflects magnitude
+  int r = constrain(4 + (int)mag, 4, 12);    // ring radius reflects magnitude
   tft.drawCircle(x, y, r, col);
-  tft.drawCircle(x, y, r - 1, col);          // 2px ring for visibility
+  tft.drawCircle(x, y, r - 1, col);          // 2px ring
   tft.fillCircle(x, y, 2, col);              // core dot on the location
+
+  // Magnitude tag (same colour as the data block) — right of the dot, or left near the edge
+  char m[8]; snprintf(m, sizeof(m), "M%.1f", mag);
+  tft.setTextFont(1);
+  tft.setTextColor(col);
+  int lw = tft.textWidth(m);
+  int lx = x + r + 3;
+  if (lx + lw > MAP_X + MAP_WIDTH - 2) lx = x - r - 3 - lw;   // flip to stay on the panel
+  tft.setCursor(lx, y - 3);
+  tft.print(m);
 }
 
 void drawMap() {
