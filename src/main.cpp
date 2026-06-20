@@ -1196,16 +1196,7 @@ void drawDashedCircle(int cx, int cy, int r, uint16_t col) {
 void drawRings() {
   const int rad[4] = {30, 54, 78, 98};
   const uint16_t rc[4] = {currentTheme.ring1, currentTheme.ring2, currentTheme.ring3, currentTheme.ring4};
-  const char* lab[4] = {"100", "200", "300", "500"};
   for (int i = 0; i < 4; i++) drawDashedCircle(MAP_CX, MAP_CY, rad[i], rc[i]);
-  // Distance labels along the lower-left diagonal (open ocean, clear of NZ)
-  tft.setTextFont(1);
-  tft.setTextColor(currentTheme.sub);
-  for (int i = 0; i < 4; i++) {
-    const float a = 3.1416f * 0.82f;                 // ~down-left
-    tft.setCursor(MAP_CX + (int)(cosf(a) * rad[i]) - 8, MAP_CY + (int)(sinf(a) * rad[i]) - 3);
-    tft.print(lab[i]);
-  }
   tft.drawFastHLine(MAP_CX - 6, MAP_CY, 13, currentTheme.textSecondary);
   tft.drawFastVLine(MAP_CX, MAP_CY - 6, 13, currentTheme.textSecondary);
 }
