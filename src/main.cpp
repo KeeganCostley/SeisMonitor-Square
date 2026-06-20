@@ -102,16 +102,16 @@ const int COL_W    = 116;                        // left zone width; 1px divider
 const int SEISMO_X = 6;
 const int SEISMO_Y = 26;
 const int SEISMO_WIDTH = 110;
-const int SEISMO_HEIGHT = 40;                    // 26..66
-const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);  // 46
+const int SEISMO_HEIGHT = 34;                    // 26..60
+const int SEISMO_CENTER_Y = SEISMO_Y + (SEISMO_HEIGHT / 2);  // 43
 const int SEISMO_MAX_AMPLITUDE = 50;
 const int SEISMO_LINE_X = SEISMO_X;              // trace fills the box
 const int SEISMO_LINE_W = SEISMO_WIDTH;
 
 const int DATA_X = 10;
-const int DATA_Y = 72;                           // below the seismograph
+const int DATA_Y = 64;                           // below the seismograph
 const int DATA_WIDTH = 100;
-const int DATA_HEIGHT = SCREEN_HEIGHT - DATA_Y;  // 168 (72..240)
+const int DATA_HEIGHT = SCREEN_HEIGHT - DATA_Y;  // 176 (64..240)
 
 // Map / rings zone — fills the entire right side, full height
 const int MAP_X = COL_W + 2;                     // 118
@@ -249,6 +249,13 @@ bool          prevTouching    = false;
 
 unsigned long lastMapPing      = 0;     // epicenter "active zone" ping animation
 bool          mapPingWasActive = false;
+
+TFT_eSprite   globeSpr         = TFT_eSprite(&tft);   // off-screen buffer for the spinning globe
+bool          globeSprReady    = false;
+bool          globeSprTried    = false;
+float         globeRot         = 0.6f;  // globe yaw (radians)
+unsigned long lastGlobeFrame   = 0;
+const float   GLOBE_R          = 92.0f;
 
 String lastQuakeID = "";
 
@@ -777,6 +784,14 @@ void loop() {
     mapPingWasActive = pingNow;
   }
 
+  // Spin the globe (Global region) — off-screen render + push, flicker-free
+  if (globeSprReady && strcmp(config.region, "Global") == 0 && now - lastGlobeFrame > 80) {
+    globeRot += 0.03f;
+    if (globeRot > 6.2831853f) globeRot -= 6.2831853f;
+    drawGlobalMap();
+    lastGlobeFrame = now;
+  }
+
   if (now - lastAPICheck > API_POLL_INTERVAL) {
     checkForEarthquakes();
     lastAPICheck = now;
@@ -873,15 +888,14 @@ void drawWrappedText(const char* text, int startX, int startY, int maxWidth, int
 const int GEAR_CX = 308;   // settings cog — header right corner (also touch target)
 const int GEAR_CY = 10;
 
-// Small gear/cog icon centred at (cx,cy): solid disc, rim notched into teeth,
-// hollow hub. Reads as a clean cog at ~16px (vs. the old radial spikes).
+// Gear/cog icon centred at (cx,cy): body disc with 8 protruding teeth + hub
+// hole. The teeth sticking out read clearly as a settings cog (~20px).
 void drawGearIcon(int cx, int cy, uint16_t color) {
-  tft.fillCircle(cx, cy, 7, color);
-  for (int a = 0; a < 360; a += 45) {            // carve 8 notches between teeth
-    float r = (a + 22.5f) * 0.01745329f;
-    tft.fillCircle(cx + (int)(cosf(r) * 7), cy + (int)(sinf(r) * 7), 2, currentTheme.background);
+  for (int a = 0; a < 360; a += 45) {            // 8 teeth poking out past the body
+    float r = a * 0.01745329f;
+    tft.fillCircle(cx + (int)(cosf(r) * 8), cy + (int)(sinf(r) * 8), 2, color);
   }
-  tft.drawCircle(cx, cy, 4, currentTheme.background);   // hub ring
+  tft.fillCircle(cx, cy, 6, color);              // body
   tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole
 }
 
@@ -1048,10 +1062,10 @@ int drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color) {
 int drawPlaceName(const char* text, int x, int y, int maxW) {
   tft.setFreeFont(FONT_DATA);
   tft.setTextColor(currentTheme.textPrimary);
-  const int lineH = 13, base = 10;
+  const int lineH = 12, base = 10;
   int len = strlen(text), pos = 0, lines = 0;
   char line[64];
-  while (pos < len && lines < 2) {
+  while (pos < len && lines < 3) {
     int rem = min(len - pos, 63);
     strncpy(line, text + pos, rem); line[rem] = '\0';
     if (tft.textWidth(line) <= maxW) {
@@ -1084,7 +1098,7 @@ int drawDataBlock(int y, EarthquakeData &q, const char* label, uint16_t accent) 
   tft.setTextColor(accent);
   tft.setCursor(x + 9, y);
   tft.print(label);
-  y += 10;
+  y += 9;
 
   if (!q.isValid) {
     tft.setTextColor(currentTheme.textSecondary);
@@ -1095,7 +1109,7 @@ int drawDataBlock(int y, EarthquakeData &q, const char* label, uint16_t accent) 
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
   tft.setTextColor(accent);
   tft.drawString(m, x, y, 4);                  // Font 4 — big number
-  y += 27;
+  y += 26;
 
   y += drawPlaceName(q.location, x, y, DATA_WIDTH);
 
@@ -1109,14 +1123,14 @@ int drawDataBlock(int y, EarthquakeData &q, const char* label, uint16_t accent) 
   char dep[10]; snprintf(dep, sizeof(dep), "%.0fKM", q.depth);
   tft.setCursor(mx + 4, y);
   tft.print(dep);
-  return y + 10;
+  return y + 9;
 }
 
 void drawDataPanel() {
   tft.fillRect(0, DATA_Y, COL_W, DATA_HEIGHT, currentTheme.background);
-  int y = DATA_Y + 2;
+  int y = DATA_Y;
   y = drawDataBlock(y, latestQuake, "LATEST", currentTheme.dataLatest);
-  y += 8;
+  y += 6;
   drawDataBlock(y, highestRegionalQuake, "24H HIGH", currentTheme.dataHighest);
 }
 
@@ -1136,17 +1150,7 @@ void drawDashedCircle(int cx, int cy, int r, uint16_t col) {
 void drawRings() {
   const int rad[4] = {32, 56, 80, 100};
   const uint16_t rc[4] = {currentTheme.ring1, currentTheme.ring2, currentTheme.ring3, currentTheme.ring4};
-  const char* lab[4] = {"100KM", "200KM", "300KM", "500KM"};
   for (int i = 0; i < 4; i++) drawDashedCircle(MAP_CX, MAP_CY, rad[i], rc[i]);
-  tft.setTextFont(1);
-  tft.setTextColor(currentTheme.sub);
-  for (int i = 0; i < 4; i++) {
-    // Stagger down the open lower-right diagonal so all four read cleanly.
-    int lx = MAP_CX + (int)(rad[i] * 0.66f);
-    int ly = MAP_CY + (int)(rad[i] * 0.74f) - 4;
-    tft.setCursor(lx, ly);
-    tft.print(lab[i]);
-  }
   tft.drawFastHLine(MAP_CX - 6, MAP_CY, 13, currentTheme.textSecondary);
   tft.drawFastVLine(MAP_CX, MAP_CY - 6, 13, currentTheme.textSecondary);
 }
@@ -1987,11 +1991,12 @@ void drawCaliforniaMap() {
 // REGIONAL MAPS - GLOBAL
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── Wireframe globe (Global region) — orthographic, tilted, lat/lon mesh ──
-const float GLOBE_R = 92.0f;
-float globeRot = 0.6f;                 // yaw (radians) — bumped by the animation hook
+// ── Wireframe globe (Global region) — orthographic tilted sphere, lat/lon mesh.
+//    Rendered into an off-screen sprite (globeSpr) so it can spin flicker-free;
+//    falls back to drawing straight to the panel if the sprite won't allocate.
+//    Templated on the draw target T so ONE renderer targets sprite OR screen. ──
 
-void globeProject(float lat, float lon, int& sx, int& sy, bool& front) {
+void globeProject(float lat, float lon, int cx, int cy, int& sx, int& sy, bool& front) {
   const float cosT = 0.9131f, sinT = 0.4078f;   // tilt 0.42 rad
   float phi = lat * 0.01745329f, lam = lon * 0.01745329f + globeRot;
   float x = cosf(phi) * sinf(lam);
@@ -1999,85 +2004,94 @@ void globeProject(float lat, float lon, int& sx, int& sy, bool& front) {
   float z = cosf(phi) * cosf(lam);
   float y2 = y * cosT - z * sinT;
   float z2 = y * sinT + z * cosT;
-  sx = MAP_CX + (int)(GLOBE_R * x);
-  sy = MAP_CY - (int)(GLOBE_R * y2);
+  sx = cx + (int)(GLOBE_R * x);
+  sy = cy - (int)(GLOBE_R * y2);
   front = (z2 > 0.0f);
 }
 
-// Draw a lat/lon polyline on the globe: front-facing segments bright, back dim,
-// hemisphere-straddling segments skipped.
-void globePolyline(const float pts[][2], int n, uint16_t bright, uint16_t dim) {
+template<class T>
+void globePolyT(T* g, const float pts[][2], int n, int cx, int cy, uint16_t bright, uint16_t dim) {
   int px = 0, py = 0; bool pf = false, have = false;
   for (int i = 0; i < n; i++) {
-    int sx, sy; bool front; globeProject(pts[i][0], pts[i][1], sx, sy, front);
-    if (have) {
-      if      (pf && front)   tft.drawLine(px, py, sx, sy, bright);
-      else if (!pf && !front) tft.drawLine(px, py, sx, sy, dim);
-    }
+    int sx, sy; bool front; globeProject(pts[i][0], pts[i][1], cx, cy, sx, sy, front);
+    if (have) { if (pf && front) g->drawLine(px, py, sx, sy, bright);
+                else if (!pf && !front) g->drawLine(px, py, sx, sy, dim); }
     px = sx; py = sy; pf = front; have = true;
   }
 }
 
-void globeMarker(float lat, float lon, uint16_t col) {
-  int sx, sy; bool front; globeProject(lat, lon, sx, sy, front);
-  if (!front) return;                              // on the back face — hidden
-  float dx = sx - MAP_CX, dy = sy - MAP_CY;
+template<class T>
+void globeMarkerT(T* g, float lat, float lon, int cx, int cy, uint16_t col) {
+  int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
+  if (!front) return;                              // back face — hidden
+  float dx = sx - cx, dy = sy - cy;
   float len = sqrtf(dx * dx + dy * dy); if (len < 1) len = 1;
   int tx = sx + (int)(dx / len * 12), ty = sy + (int)(dy / len * 12);  // radial spike
-  tft.drawLine(sx, sy, tx, ty, col);
-  tft.drawCircle(sx, sy, 4, col);
-  tft.fillCircle(sx, sy, 2, col);
-  tft.fillCircle(tx, ty, 1, col);
+  g->drawLine(sx, sy, tx, ty, col);
+  g->drawCircle(sx, sy, 4, col);
+  g->fillCircle(sx, sy, 2, col);
+  g->fillCircle(tx, ty, 1, col);
 }
 
-void drawGlobalMap() {
+// Render the whole globe into target g (sprite or screen), centred at (cx,cy).
+template<class T>
+void renderGlobe(T* g, int cx, int cy) {
   const uint16_t globeFill = 0x0081, limb = 0x07F1, meshF = 0x05EC, meshB = 0x0120, eqF = 0x07EC;
+  g->fillCircle(cx, cy, (int)GLOBE_R, globeFill);
 
-  tft.fillCircle(MAP_CX, MAP_CY, (int)GLOBE_R, globeFill);
-
-  // Parallels every 30° (equator brighter)
-  for (int lat = -60; lat <= 60; lat += 30) {
+  for (int lat = -60; lat <= 60; lat += 30) {                 // parallels (equator brighter)
     uint16_t b = (lat == 0) ? eqF : meshF;
     int px = 0, py = 0; bool pf = false, have = false;
     for (int lon = -180; lon <= 180; lon += 6) {
-      int sx, sy; bool front; globeProject(lat, lon, sx, sy, front);
-      if (have) { if (pf && front) tft.drawLine(px, py, sx, sy, b);
-                  else if (!pf && !front) tft.drawLine(px, py, sx, sy, meshB); }
+      int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
+      if (have) { if (pf && front) g->drawLine(px, py, sx, sy, b);
+                  else if (!pf && !front) g->drawLine(px, py, sx, sy, meshB); }
       px = sx; py = sy; pf = front; have = true;
     }
   }
-  // Meridians every 30°
-  for (int lon = -180; lon < 180; lon += 30) {
+  for (int lon = -180; lon < 180; lon += 30) {                 // meridians
     int px = 0, py = 0; bool pf = false, have = false;
     for (int lat = -90; lat <= 90; lat += 6) {
-      int sx, sy; bool front; globeProject(lat, lon, sx, sy, front);
-      if (have) { if (pf && front) tft.drawLine(px, py, sx, sy, meshF);
-                  else if (!pf && !front) tft.drawLine(px, py, sx, sy, meshB); }
+      int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
+      if (have) { if (pf && front) g->drawLine(px, py, sx, sy, meshF);
+                  else if (!pf && !front) g->drawLine(px, py, sx, sy, meshB); }
       px = sx; py = sy; pf = front; have = true;
     }
   }
 
-  // Coarse continents (lo-fi, self-closing loops) — front bright, back dim
   static const float na[][2] = {{70,-150},{68,-130},{60,-140},{55,-130},{48,-124},{40,-124},{32,-117},{23,-110},{18,-95},{25,-97},{30,-88},{28,-82},{25,-80},{35,-76},{45,-67},{50,-58},{60,-65},{68,-80},{73,-100},{72,-125},{70,-150}};
   static const float sa[][2] = {{10,-75},{5,-78},{-5,-81},{-15,-75},{-25,-70},{-35,-72},{-45,-74},{-53,-70},{-50,-68},{-40,-62},{-30,-56},{-23,-43},{-13,-38},{-5,-35},{2,-50},{8,-60},{11,-72},{10,-75}};
   static const float af[][2] = {{35,-6},{32,10},{33,22},{31,32},{15,40},{12,51},{0,42},{-12,40},{-25,35},{-34,26},{-34,18},{-22,14},{-8,13},{4,9},{5,-4},{10,-15},{21,-17},{31,-10},{35,-6}};
   static const float eu[][2] = {{36,-9},{43,-9},{48,-5},{51,2},{58,5},{60,20},{66,25},{70,30},{68,55},{73,75},{75,100},{72,130},{66,170},{60,162},{55,158},{60,140},{52,140},{45,135},{40,123},{32,120},{22,108},{10,98},{8,80},{20,72},{25,60},{27,50},{30,48},{36,36},{40,28},{40,18},{44,12},{44,0},{40,-5},{36,-9}};
   static const float au[][2] = {{-12,131},{-11,142},{-19,147},{-28,153},{-38,147},{-38,140},{-35,135},{-32,127},{-34,118},{-22,114},{-15,124},{-12,131}};
-  globePolyline(na, 21, eqF, 0x0140);
-  globePolyline(sa, 18, eqF, 0x0140);
-  globePolyline(af, 19, eqF, 0x0140);
-  globePolyline(eu, 34, eqF, 0x0140);
-  globePolyline(au, 12, eqF, 0x0140);
+  globePolyT(g, na, 21, cx, cy, eqF, 0x0140);
+  globePolyT(g, sa, 18, cx, cy, eqF, 0x0140);
+  globePolyT(g, af, 19, cx, cy, eqF, 0x0140);
+  globePolyT(g, eu, 34, cx, cy, eqF, 0x0140);
+  globePolyT(g, au, 12, cx, cy, eqF, 0x0140);
 
-  // Limb (bright 2px edge) on top
-  tft.drawCircle(MAP_CX, MAP_CY, (int)GLOBE_R, limb);
-  tft.drawCircle(MAP_CX, MAP_CY, (int)GLOBE_R - 1, limb);
+  g->drawCircle(cx, cy, (int)GLOBE_R, limb);
+  g->drawCircle(cx, cy, (int)GLOBE_R - 1, limb);
 
-  // Epicentre markers on the sphere surface
   if (latestQuake.isValid)
-    globeMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest);
+    globeMarkerT(g, latestQuake.latitude, latestQuake.longitude, cx, cy, currentTheme.dataLatest);
   if (highestRegionalQuake.isValid)
-    globeMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest);
+    globeMarkerT(g, highestRegionalQuake.latitude, highestRegionalQuake.longitude, cx, cy, currentTheme.dataHighest);
+}
+
+void drawGlobalMap() {
+  if (!globeSprTried) {                          // lazy one-time sprite allocation
+    globeSprTried = true;
+    globeSpr.setColorDepth(16);
+    globeSprReady = (globeSpr.createSprite(MAP_WIDTH, MAP_HEIGHT) != nullptr);
+  }
+  if (globeSprReady) {
+    globeSpr.fillSprite(currentTheme.mapOcean);
+    renderGlobe(&globeSpr, MAP_CX - MAP_X, MAP_CY - MAP_Y);   // sprite-local centre
+    globeSpr.pushSprite(MAP_X, MAP_Y);
+  } else {
+    renderGlobe(&tft, MAP_CX, MAP_CY);           // fallback: straight to the panel (static)
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
