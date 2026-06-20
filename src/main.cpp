@@ -2031,16 +2031,25 @@ void globePolyT(T* g, const float pts[][2], int n, int cx, int cy, uint16_t brig
 }
 
 template<class T>
-void globeMarkerT(T* g, float lat, float lon, int cx, int cy, uint16_t col) {
+void globeMarkerT(T* g, float lat, float lon, int cx, int cy, uint16_t col, float mag) {
   int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
-  if (!front) return;                              // back face — hidden
+  if (!front) return;                              // back face — hidden (the spin reveals it)
   float dx = sx - cx, dy = sy - cy;
   float len = sqrtf(dx * dx + dy * dy); if (len < 1) len = 1;
-  int tx = sx + (int)(dx / len * 12), ty = sy + (int)(dy / len * 12);  // radial spike
+  float ux = dx / len, uy = dy / len;
+  int tx = sx + (int)(ux * 12), ty = sy + (int)(uy * 12);   // radial spike outward
   g->drawLine(sx, sy, tx, ty, col);
   g->drawCircle(sx, sy, 4, col);
   g->fillCircle(sx, sy, 2, col);
   g->fillCircle(tx, ty, 1, col);
+  // M-value tag just past the spike tip, in the data-block colour
+  char m[8]; snprintf(m, sizeof(m), "M%.1f", mag);
+  g->setTextFont(1);
+  g->setTextColor(col);
+  int lw = g->textWidth(m);
+  int lx = (ux >= 0) ? tx + 2 : tx - 2 - lw;
+  g->setCursor(lx, ty - 3);
+  g->print(m);
 }
 
 // Render the whole globe into target g (sprite or screen), centred at (cx,cy).
@@ -2084,9 +2093,9 @@ void renderGlobe(T* g, int cx, int cy) {
   g->drawCircle(cx, cy, (int)GLOBE_R - 1, limb);
 
   if (latestQuake.isValid)
-    globeMarkerT(g, latestQuake.latitude, latestQuake.longitude, cx, cy, currentTheme.dataLatest);
+    globeMarkerT(g, latestQuake.latitude, latestQuake.longitude, cx, cy, currentTheme.dataLatest, latestQuake.magnitude);
   if (highestRegionalQuake.isValid)
-    globeMarkerT(g, highestRegionalQuake.latitude, highestRegionalQuake.longitude, cx, cy, currentTheme.dataHighest);
+    globeMarkerT(g, highestRegionalQuake.latitude, highestRegionalQuake.longitude, cx, cy, currentTheme.dataHighest, highestRegionalQuake.magnitude);
 }
 
 void drawGlobalMap() {
