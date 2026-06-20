@@ -1060,7 +1060,7 @@ int drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color) {
 
 // Place name — up to 2 lines, FreeSansBold9pt (Inter-like), ink. Returns height.
 int drawPlaceName(const char* text, int x, int y, int maxW) {
-  tft.setFreeFont(FONT_DATA);
+  tft.setFreeFont(FONT_LABEL);     // regular weight — narrower, fits long localities
   tft.setTextColor(currentTheme.textPrimary);
   const int lineH = 12, base = 10;
   int len = strlen(text), pos = 0, lines = 0;
@@ -2068,7 +2068,7 @@ void renderGlobe(T* g, int cx, int cy) {
       px = sx; py = sy; pf = front; have = true;
     }
   }
-  for (int lon = -180; lon < 180; lon += 30) {                 // meridians
+  for (int lon = -180; lon < 180; lon += 20) {                 // meridians
     int px = 0, py = 0; bool pf = false, have = false;
     for (int lat = -90; lat <= 90; lat += 6) {
       int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
@@ -2078,16 +2078,30 @@ void renderGlobe(T* g, int cx, int cy) {
     }
   }
 
-  static const float na[][2] = {{70,-150},{68,-130},{60,-140},{55,-130},{48,-124},{40,-124},{32,-117},{23,-110},{18,-95},{25,-97},{30,-88},{28,-82},{25,-80},{35,-76},{45,-67},{50,-58},{60,-65},{68,-80},{73,-100},{72,-125},{70,-150}};
-  static const float sa[][2] = {{10,-75},{5,-78},{-5,-81},{-15,-75},{-25,-70},{-35,-72},{-45,-74},{-53,-70},{-50,-68},{-40,-62},{-30,-56},{-23,-43},{-13,-38},{-5,-35},{2,-50},{8,-60},{11,-72},{10,-75}};
-  static const float af[][2] = {{35,-6},{32,10},{33,22},{31,32},{15,40},{12,51},{0,42},{-12,40},{-25,35},{-34,26},{-34,18},{-22,14},{-8,13},{4,9},{5,-4},{10,-15},{21,-17},{31,-10},{35,-6}};
-  static const float eu[][2] = {{36,-9},{43,-9},{48,-5},{51,2},{58,5},{60,20},{66,25},{70,30},{68,55},{73,75},{75,100},{72,130},{66,170},{60,162},{55,158},{60,140},{52,140},{45,135},{40,123},{32,120},{22,108},{10,98},{8,80},{20,72},{25,60},{27,50},{30,48},{36,36},{40,28},{40,18},{44,12},{44,0},{40,-5},{36,-9}};
-  static const float au[][2] = {{-12,131},{-11,142},{-19,147},{-28,153},{-38,147},{-38,140},{-35,135},{-32,127},{-34,118},{-22,114},{-15,124},{-12,131}};
-  globePolyT(g, na, 21, cx, cy, eqF, 0x0140);
-  globePolyT(g, sa, 18, cx, cy, eqF, 0x0140);
-  globePolyT(g, af, 19, cx, cy, eqF, 0x0140);
-  globePolyT(g, eu, 34, cx, cy, eqF, 0x0140);
-  globePolyT(g, au, 12, cx, cy, eqF, 0x0140);
+  static const float na[][2] = {{71,-156},{68,-166},{60,-164},{56,-156},{59,-139},{54,-130},{48,-124},{42,-124},{34,-120},{32,-117},{27,-114},{23,-110},{21,-105},{18,-103},{16,-95},{19,-91},{18,-88},{14,-83},{9,-80},{14,-84},{20,-90},{25,-82},{27,-80},{30,-82},{35,-76},{40,-73},{44,-67},{47,-60},{52,-56},{55,-60},{60,-64},{63,-77},{67,-63},{70,-85},{73,-100},{72,-125},{71,-156}};
+  static const float sa[][2] = {{12,-72},{8,-77},{2,-80},{-4,-81},{-10,-78},{-16,-74},{-23,-70},{-31,-71},{-38,-73},{-44,-75},{-50,-74},{-54,-69},{-51,-68},{-46,-66},{-40,-62},{-37,-57},{-32,-52},{-25,-48},{-23,-43},{-15,-39},{-8,-35},{-3,-39},{0,-50},{5,-52},{8,-60},{11,-65},{12,-72}};
+  static const float af[][2] = {{37,10},{33,-6},{27,-13},{21,-17},{14,-17},{8,-13},{4,-7},{5,0},{6,4},{3,9},{-3,11},{-10,14},{-17,12},{-25,16},{-33,18},{-34,24},{-29,31},{-22,35},{-15,40},{-8,40},{-1,42},{6,49},{12,51},{12,44},{16,40},{22,38},{28,34},{31,31},{32,24},{33,18},{35,11},{37,10}};
+  static const float eu[][2] = {{43,-9},{37,-9},{36,-2},{40,3},{43,7},{44,12},{40,18},{38,16},{37,23},{41,29},{45,37},{41,41},{37,36},{31,32},{29,35},{25,37},{21,39},{17,42},{15,44},{20,57},{25,57},{23,68},{20,73},{14,80},{8,77},{10,80},{16,82},{21,87},{22,92},{16,95},{9,99},{14,109},{20,107},{22,114},{30,122},{37,122},{40,125},{43,131},{47,138},{52,141},{59,143},{60,154},{62,163},{66,170},{70,160},{72,140},{75,110},{78,95},{80,68},{75,55},{70,50},{66,42},{62,30},{66,22},{70,30},{68,38},{63,30},{59,23},{61,16},{57,8},{55,11},{52,3},{48,-4},{43,-9}};
+  static const float au[][2] = {{-12,131},{-11,137},{-14,142},{-19,147},{-25,153},{-32,153},{-38,147},{-38,141},{-35,138},{-32,134},{-34,123},{-32,116},{-26,114},{-20,117},{-15,124},{-12,131}};
+  static const float gr[][2] = {{83,-32},{80,-18},{73,-22},{67,-32},{60,-43},{64,-50},{72,-55},{78,-50},{82,-40},{83,-32}};
+  static const float mg[][2] = {{-12,49},{-16,50},{-22,48},{-25,45},{-22,43},{-16,44},{-12,49}};
+  static const float jp[][2] = {{45,142},{40,140},{35,139},{34,135},{36,137},{38,140},{41,141},{45,142}};
+  static const float br[][2] = {{58,-5},{54,-3},{51,1},{50,-5},{54,-6},{57,-7},{58,-5}};
+  static const float nz[][2] = {{-34,173},{-39,177},{-41,175},{-46,168},{-43,170},{-38,174},{-34,173}};
+  static const float id[][2] = {{5,95},{0,100},{-6,105},{-8,114},{-8,120},{-4,119},{1,110},{4,99},{5,95}};
+  #define NPTS(a) (int)(sizeof(a) / sizeof(a[0]))
+  globePolyT(g, na, NPTS(na), cx, cy, eqF,   0x0140);
+  globePolyT(g, sa, NPTS(sa), cx, cy, eqF,   0x0140);
+  globePolyT(g, af, NPTS(af), cx, cy, eqF,   0x0140);
+  globePolyT(g, eu, NPTS(eu), cx, cy, eqF,   0x0140);
+  globePolyT(g, au, NPTS(au), cx, cy, eqF,   0x0140);
+  globePolyT(g, gr, NPTS(gr), cx, cy, meshF, 0x0120);
+  globePolyT(g, mg, NPTS(mg), cx, cy, meshF, 0x0120);
+  globePolyT(g, jp, NPTS(jp), cx, cy, meshF, 0x0120);
+  globePolyT(g, br, NPTS(br), cx, cy, meshF, 0x0120);
+  globePolyT(g, nz, NPTS(nz), cx, cy, meshF, 0x0120);
+  globePolyT(g, id, NPTS(id), cx, cy, meshF, 0x0120);
+  #undef NPTS
 
   g->drawCircle(cx, cy, (int)GLOBE_R, limb);
   g->drawCircle(cx, cy, (int)GLOBE_R - 1, limb);
@@ -2609,7 +2623,9 @@ void handleButton() {
     if (showingRegionPicker) {
       int picked = regionAtPoint(sx, sy);
       if (picked >= 0) selectRegion(picked);                                   // chose a region
-      else if (sx > 280 && sy < 30) { showingRegionPicker = false; drawUI(); } // cog closes
+      else if (sx > 280 && sy < 30 && now - pickerStartTime > 700) {           // cog closes
+        showingRegionPicker = false; drawUI();                                 // (guarded vs. a bounce right after opening)
+      }
       // else: ignore taps elsewhere on the settings screen
     } else if (sx > 280 && sy < 30) {
       drawRegionPicker();                                // gear (top-right) → location picker
