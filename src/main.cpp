@@ -1844,61 +1844,33 @@ void drawJapanMap() {
 void drawChinaMap() {
   // China border + coastline - clockwise from northeast
   const float china[][2] = {
-    // Northeast (Russia border along Amur/Heilongjiang)
-    {53.30, 125.00},  // Northern Heilongjiang
-    {48.50, 135.00},  // Khabarovsk bend
-    {45.50, 133.00},  // Ussuri area
-    {43.00, 131.00},  // Vladivostok area
+    // NE Russia border (Amur / Heilongjiang)
+    {53.30,125.00}, {50.00,127.30}, {48.50,135.00}, {45.50,133.00}, {43.00,131.00},
     // Korean border
-    {42.00, 130.50},  // Tumen River
-    {41.00, 126.50},  // Yalu River
-    {40.00, 124.50},  // Dandong
-    // Liaodong Peninsula & Bohai Bay
-    {39.00, 121.80},  // Dalian / Liaodong tip
-    {40.00, 121.60},  // Liaodong NE coast
-    {39.00, 118.50},  // Tianjin / Bohai coast
+    {42.00,130.50}, {41.40,128.10}, {41.00,126.50}, {40.00,124.50},
+    // Liaodong Peninsula + Bohai Bay
+    {39.80,123.20}, {39.00,121.80}, {40.10,121.70}, {40.20,120.10}, {39.00,118.50},
+    {38.20,118.20}, {37.80,119.00},
     // Shandong Peninsula
-    {37.40, 122.50},  // Weihai (Shandong tip)
-    {36.10, 120.40},  // Qingdao
-    {35.00, 119.50},  // Jiangsu north coast
-    // East coast (Yangtze to South China Sea)
-    {34.00, 120.00},  // Jiangsu coast
-    {32.00, 121.80},  // Shanghai / Yangtze mouth
-    {30.50, 122.00},  // Hangzhou Bay
-    {28.50, 121.50},  // Wenzhou
-    {26.00, 119.80},  // Fuzhou
-    {24.50, 118.20},  // Xiamen
-    {23.00, 116.50},  // Shantou
-    {22.50, 114.20},  // Hong Kong
-    {21.50, 110.50},  // Zhanjiang / Leizhou
-    // South coast & Vietnam border
-    {20.00, 110.00},  // Hainan Strait
-    {21.50, 108.00},  // Vietnam border coast
-    {22.50, 106.50},  // Guangxi / Vietnam
-    // Southwest borders (Vietnam, Laos, Myanmar)
-    {22.00, 101.00},  // Yunnan south
-    {21.20, 100.00},  // Myanmar border
+    {37.40,122.50}, {36.95,122.55}, {36.10,120.40}, {35.55,119.65}, {35.00,119.50},
+    // Jiangsu -> Yangtze mouth -> Hangzhou Bay
+    {34.00,120.00}, {33.00,120.85}, {32.00,121.80}, {30.85,121.85}, {30.50,122.00},
+    {29.50,121.70}, {28.50,121.50},
+    // SE coast (Wenzhou -> Fuzhou -> Xiamen -> Shantou -> HK -> Leizhou)
+    {27.20,120.60}, {26.00,119.80}, {25.20,119.20}, {24.50,118.20}, {23.65,117.20},
+    {23.00,116.50}, {22.70,115.30}, {22.50,114.20}, {21.90,113.10}, {21.50,110.50},
+    // South coast + Vietnam border
+    {20.00,110.00}, {21.50,108.00}, {22.50,106.50},
+    // SW borders (Laos / Myanmar)
+    {22.00,101.00}, {21.20,100.00}, {24.00,98.50}, {27.50,97.50}, {28.50,97.00},
     // India / Nepal / Tibet border
-    {27.50, 97.50},   // Myanmar/Tibet junction
-    {28.50, 97.00},   // Arunachal Pradesh area
-    {28.00, 87.00},   // Nepal border / Everest
-    {32.00, 79.00},   // Western Tibet
+    {28.00,87.00}, {30.00,81.00}, {32.00,79.00}, {34.00,78.00},
     // Xinjiang west
-    {36.00, 76.00},   // Karakoram Pass
-    {39.50, 73.50},   // Tajikistan border
-    // Northwest borders (Kazakhstan, Mongolia)
-    {44.00, 80.00},   // Kazakhstan
-    {47.50, 87.00},   // Altai Mountains
-    // Mongolia border
-    {49.50, 89.00},   // Mongolia west
-    {49.00, 97.00},   // Mongolia central
-    {46.00, 105.00},  // Gobi
-    {42.00, 111.50},  // Inner Mongolia
-    {42.50, 117.00},  // Hebei north
-    {45.00, 119.00},  // Inner Mongolia east
-    {47.00, 120.00},  // Hulunbuir
-    {50.00, 119.80},  // North border
-    {53.30, 125.00},  // Close
+    {36.00,76.00}, {37.50,75.00}, {39.50,73.50},
+    // NW borders (Kazakhstan / Mongolia)
+    {41.00,80.50}, {44.00,80.00}, {45.50,83.00}, {47.50,87.00}, {49.50,89.00},
+    {49.00,97.00}, {47.00,102.00}, {46.00,105.00}, {42.50,108.50}, {42.00,111.50},
+    {42.50,117.00}, {45.00,119.00}, {47.00,120.00}, {50.00,119.80}, {53.30,125.00},
   };
 
   int pts = sizeof(china) / sizeof(china[0]);
@@ -1961,67 +1933,26 @@ void drawChinaMap() {
 void drawCaliforniaMap() {
   // California coastline + state border - clockwise from NW coast
   const float california[][2] = {
-    // Oregon border / north coast
-    {42.00, -124.21},  // Oregon border at coast
-    {41.75, -124.18},  // Del Norte coast
-    {41.10, -124.15},  // Crescent City
-    // Humboldt / Mendocino
-    {40.80, -124.18},  // Eureka area
-    {40.44, -124.40},  // Cape Mendocino
-    {40.02, -124.08},  // Mendocino County
-    {39.35, -123.80},  // Fort Bragg area
-    {38.95, -123.65},  // Point Arena
-    // Marin / SF Bay
-    {38.35, -123.05},  // Point Reyes
-    {37.82, -122.52},  // Golden Gate
-    {37.55, -122.50},  // Pacifica / SF south
-    // Half Moon Bay to Santa Cruz
-    {37.18, -122.38},  // Half Moon Bay
-    {36.97, -122.00},  // Santa Cruz
-    // Monterey Bay
-    {36.60, -121.90},  // Monterey
-    {36.55, -121.95},  // Carmel
-    // Big Sur coast
-    {36.25, -121.80},  // Big Sur north
-    {35.89, -121.48},  // Big Sur south
-    // Central Coast
-    {35.42, -120.90},  // San Luis Obispo
-    {35.17, -120.72},  // Pismo Beach
-    {34.92, -120.62},  // Point Sal
-    // Point Conception (coast turns east!)
-    {34.45, -120.47},  // Point Conception
-    // Santa Barbara / Ventura
-    {34.40, -119.85},  // Santa Barbara
-    {34.05, -119.18},  // Oxnard
-    // Los Angeles
-    {33.95, -118.80},  // Malibu
-    {33.72, -118.40},  // Santa Monica Bay
-    {33.72, -118.28},  // LA / Long Beach
-    // Orange County / San Diego
-    {33.38, -117.60},  // San Clemente
-    {33.05, -117.30},  // Oceanside
-    {32.72, -117.17},  // San Diego
-    {32.53, -117.12},  // Tijuana border coast
-    // Mexico border east
-    {32.53, -117.12},
-    {32.54, -116.10},  // Tecate border
-    {32.72, -114.72},  // Yuma / Colorado River
-    // Arizona / Nevada border (east side)
-    {33.00, -114.63},  // Parker area
-    {34.00, -114.43},  // Needles area
-    {35.00, -114.63},  // Below Las Vegas
-    {36.00, -114.75},  // Nevada corner
-    {36.20, -115.90},  // Nevada border jog
-    {37.00, -117.00},  // Death Valley east
-    {38.00, -118.00},  // Mono Lake area
-    {39.00, -120.00},  // Lake Tahoe
-    {40.00, -120.00},  // NE California
-    {41.00, -120.00},  // Modoc area
-    {42.00, -120.00},  // Oregon border east
-    // Oregon border west
-    {42.00, -121.50},
-    {42.00, -123.00},
-    {42.00, -124.21},  // Close
+    // Pacific coast — Oregon border south to Mexico (densified)
+    {42.00, -124.21}, {41.75, -124.18}, {41.45, -124.07}, {41.10, -124.15},
+    {40.80, -124.18}, {40.44, -124.40}, {40.26, -124.36}, {40.02, -124.08},
+    {39.70, -123.82}, {39.35, -123.80}, {39.10, -123.72}, {38.95, -123.65},
+    {38.74, -123.52}, {38.50, -123.22}, {38.35, -123.05}, {38.11, -122.95},
+    {38.00, -122.98}, {37.92, -122.70}, {37.82, -122.52}, {37.66, -122.51},
+    {37.55, -122.50}, {37.34, -122.41}, {37.18, -122.38}, {36.97, -122.03},
+    {36.83, -121.81}, {36.62, -121.92}, {36.55, -121.95}, {36.42, -121.91},
+    {36.30, -121.85}, {36.10, -121.62}, {35.89, -121.48}, {35.66, -121.28},
+    {35.45, -121.00}, {35.30, -120.85}, {35.17, -120.72}, {34.92, -120.65},
+    {34.70, -120.62}, {34.52, -120.52}, {34.45, -120.47}, {34.42, -120.12},
+    {34.40, -119.85}, {34.27, -119.52}, {34.08, -119.25}, {34.05, -119.00},
+    {33.97, -118.82}, {33.86, -118.56}, {33.72, -118.40}, {33.72, -118.28},
+    {33.60, -117.93}, {33.46, -117.72}, {33.38, -117.60}, {33.18, -117.42},
+    {33.00, -117.28}, {32.85, -117.26}, {32.72, -117.17}, {32.53, -117.12},
+    // Mexico + Arizona/Nevada/Oregon borders
+    {32.54, -116.10}, {32.72, -114.72}, {33.00, -114.63}, {34.00, -114.43},
+    {35.00, -114.63}, {36.00, -114.75}, {36.20, -115.90}, {37.00, -117.00},
+    {38.00, -118.00}, {39.00, -120.00}, {40.00, -120.00}, {41.00, -120.00},
+    {42.00, -120.00}, {42.00, -122.00}, {42.00, -124.21},
   };
 
   int pts = sizeof(california) / sizeof(california[0]);
