@@ -82,7 +82,7 @@ const int SCREEN_HEIGHT = 240;
 // ═══════════════════════════════════════════════════════════════════════════
 
 const unsigned long API_POLL_INTERVAL = 30000;      // 30 seconds
-const unsigned long SEISMO_UPDATE_INTERVAL = 100;   // 100ms (was 50ms - slowed by 50%)
+const unsigned long SEISMO_UPDATE_INTERVAL = 50;    // 50ms — smoother / higher-res scroll
 const unsigned long DISPLAY_CYCLE_INTERVAL = 60000; // 60 seconds
 const unsigned long REST_MODE_TIMEOUT = 45000;      // 45 seconds
 const unsigned long ALERT_DURATION = 25000;         // 25 seconds
@@ -796,8 +796,8 @@ void loop() {
   }
 
   // Spin the globe (Global region) — off-screen render + push, flicker-free
-  if (globeSprReady && strcmp(config.region, "Global") == 0 && now - lastGlobeFrame > 80) {
-    globeRot += 0.03f;
+  if (globeSprReady && strcmp(config.region, "Global") == 0 && now - lastGlobeFrame > 120) {
+    globeRot += 0.016f;   // slower spin; longer interval frees the loop (less lag)
     if (globeRot > 6.2831853f) globeRot -= 6.2831853f;
     drawGlobalMap();
     lastGlobeFrame = now;
@@ -1324,7 +1324,7 @@ void triggerSeismicEvent(float quakeLat, float quakeLon, float mag) {
   float halfH   = (SEISMO_HEIGHT / 2) + 6;  // allows wave to clip edges on big quakes
   float rawAmp  = pow(10.0f, 0.8f * mag)        / distKm;
   float refAmp  = pow(10.0f, 0.8f * 5.0f)       / 200.0f;
-  float scaled  = constrain((rawAmp / refAmp) * halfH * 1.2f, 3.0f, (float)halfH);
+  float scaled  = constrain((rawAmp / refAmp) * halfH * 2.5f, 8.0f, (float)halfH);  // exaggerated
 
   seismoPAmp    = scaled * 0.45f;   // P-waves are smallest
   seismoSAmp    = scaled * 0.90f;   // S-waves intermediate
@@ -1358,10 +1358,16 @@ void animateSeismograph() {
 
   switch (seismoPhase) {
 
-    case SEISMO_QUIET:
-      // Microseismic background noise
-      displacement = (random(100) < 15) ? random(-5, 6) : 0;
+    case SEISMO_QUIET: {
+      // Continuous microseismic tremor — always alive (never flat), lightly exaggerated
+      float amb = SEISMO_HEIGHT * 0.20f;
+      displacement = (int)(amb * (0.45f * sin(2.0f * PI * 0.7f * t) +
+                                  0.30f * sin(2.0f * PI * 1.9f * t) +
+                                  0.25f * sin(2.0f * PI * 3.7f * t + 1.3f)));
+      displacement += random(-3, 4);
+      if (random(100) < 6) displacement += random(-6, 7);   // occasional flutter
       break;
+    }
 
     case SEISMO_P_WAVE: {
       // High-frequency (~6 Hz), bell-envelope, small amplitude
