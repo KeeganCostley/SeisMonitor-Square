@@ -132,6 +132,7 @@ const int MAP_BOX_H = 190;
 // Soft-green structural panel borders (June-20 handoff)
 const uint16_t PANEL_EDGE     = 0x2246;          // #234a36
 const uint16_t PANEL_EDGE_DIM = 0x1183;          // #16301f
+const uint16_t GEO_DIM        = 0x19C5;          // very dark green — subtle fault/trench texture
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REGIONAL BOUNDARIES
@@ -1108,8 +1109,7 @@ int drawPlaceName(const char* text, int cx, int y, int maxW) {
     int pl = end - pos; if (pl <= 0) pl = 1;
     strncpy(line, text + pos, pl); line[pl] = '\0';
     while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
-    int w = tft.textWidth(line);
-    tft.setCursor(cx - w / 2, y + lines * lineH + base);
+    tft.setCursor(cx, y + lines * lineH + base);     // cx used as the left edge
     tft.print(line);
     lines++;
     pos = end; while (pos < len && text[pos] == ' ') pos++;
@@ -1118,56 +1118,52 @@ int drawPlaceName(const char* text, int cx, int y, int maxW) {
   return lines * lineH + 2;
 }
 
-// One centred data cell: ◆ LABEL / M#.# / place / meta, vertically centred.
+// One left-aligned data cell: ◆ LABEL / M#.# / place / meta, vertically centred.
 void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, uint16_t accent) {
-  int cx = DATA_X + DATA_WIDTH / 2;
-  int maxW = DATA_WIDTH - 10;
+  int xL = DATA_X + 7;
+  int maxW = DATA_WIDTH - 12;
   int placeLines = q.isValid ? placeLineCount(q.location, maxW) : 1;
   int contentH = 9 + 19 + (q.isValid ? (placeLines * 12 + 2 + 9) : 12);
   int y = cellY + (cellH - contentH) / 2;
   if (y < cellY + 2) y = cellY + 2;
 
-  // ◆ LABEL (centred)
+  // ◆ LABEL
   tft.setTextFont(1);
   tft.setTextColor(accent);
-  int lw = tft.textWidth(label);
-  int ls = cx - (lw + 8) / 2;
-  tft.fillTriangle(ls + 2, y, ls + 5, y + 3, ls + 2, y + 6, accent);
-  tft.fillTriangle(ls + 2, y, ls - 1, y + 3, ls + 2, y + 6, accent);
-  tft.setCursor(ls + 8, y);
+  tft.fillTriangle(xL + 2, y, xL + 5, y + 3, xL + 2, y + 6, accent);
+  tft.fillTriangle(xL + 2, y, xL - 1, y + 3, xL + 2, y + 6, accent);
+  tft.setCursor(xL + 9, y);
   tft.print(label);
   y += 9;
 
   if (!q.isValid) {
     tft.setTextColor(currentTheme.textSecondary);
-    int w = tft.textWidth("NO DATA");
-    tft.setCursor(cx - w / 2, y + 2); tft.print("NO DATA");
+    tft.setCursor(xL, y + 2); tft.print("NO DATA");
     return;
   }
 
-  // Magnitude (FreeSansBold9pt, centred)
+  // Magnitude (FreeSansBold9pt)
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
   tft.setFreeFont(FONT_DATA);
   tft.setTextColor(accent);
-  int mw = tft.textWidth(m);
-  tft.setCursor(cx - mw / 2, y + 14);
+  tft.setCursor(xL, y + 14);
   tft.print(m);
   y += 19;
 
-  // Place name (centred)
-  y += drawPlaceName(q.location, cx, y, maxW);
+  // Place name
+  y += drawPlaceName(q.location, xL, y, maxW);
 
-  // Meta: "#M AGO · #KM" (centred)
+  // Meta: "#M AGO · #KM"
   String ago = getTimeAgo(q.timestamp); ago.toUpperCase();
-  char a[16]; snprintf(a, sizeof(a), "%s AGO", ago.c_str());
-  char b[10]; snprintf(b, sizeof(b), "%dKM", (int)q.depth);
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.textSecondary);
-  int aw = tft.textWidth(a), bw = tft.textWidth(b);
-  int sx2 = cx - (aw + 8 + bw) / 2;
-  tft.setCursor(sx2, y); tft.print(a);
-  tft.fillCircle(sx2 + aw + 4, y + 3, 1, currentTheme.textSecondary);
-  tft.setCursor(sx2 + aw + 8, y); tft.print(b);
+  tft.setCursor(xL, y);
+  tft.print(ago); tft.print(" AGO");
+  int mx = tft.getCursorX();
+  tft.fillCircle(mx + 3, y + 3, 1, currentTheme.textSecondary);
+  char dep[10]; snprintf(dep, sizeof(dep), " %dKM", (int)q.depth);
+  tft.setCursor(mx + 5, y);
+  tft.print(dep);
 }
 
 void drawDataPanel() {
@@ -1494,6 +1490,21 @@ void drawMapGraticule(uint16_t color) {
 // REGIONAL MAPS - NEW ZEALAND
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Subtle geological feature (fault / trench) as a faint dotted polyline (GEO_DIM).
+void drawGeoDotted(const float pts[][2], int n) {
+  for (int i = 0; i < n - 1; i++) {
+    int x0 = mapLonToScreen(pts[i][1]),   y0 = mapLatToScreen(pts[i][0]);
+    int x1 = mapLonToScreen(pts[i + 1][1]), y1 = mapLatToScreen(pts[i + 1][0]);
+    int steps = max(abs(x1 - x0), abs(y1 - y0));
+    for (int s = 0; s <= steps; s += 2) {
+      int px = x0 + s * (x1 - x0) / max(steps, 1);
+      int py = y0 + s * (y1 - y0) / max(steps, 1);
+      if (px > MAP_X && px < MAP_X + MAP_WIDTH && py > MAP_Y && py < MAP_Y + MAP_HEIGHT)
+        tft.drawPixel(px, py, GEO_DIM);
+    }
+  }
+}
+
 void drawNZMap() {
   // North Island - clockwise from Cape Reinga
   const float northIsland[][2] = {
@@ -1615,6 +1626,16 @@ void drawNZMap() {
   for (int i = 0; i < stewartPts - 1; i++)
     tft.drawLine(mapLonToScreen(stewartIsland[i][1]),   mapLatToScreen(stewartIsland[i][0]),
                  mapLonToScreen(stewartIsland[i+1][1]), mapLatToScreen(stewartIsland[i+1][0]), currentTheme.mapOutline);
+
+  // Geological features (subtle) — Alpine Fault + Hikurangi subduction margin
+  static const float alpineFault[][2] = {
+    {-44.10,168.55},{-43.55,169.45},{-43.05,170.25},{-42.55,171.10},{-42.05,171.95},{-41.70,172.75}
+  };
+  static const float hikurangi[][2] = {
+    {-41.60,176.30},{-40.70,177.40},{-39.50,178.20},{-38.20,178.90},{-37.20,179.30}
+  };
+  drawGeoDotted(alpineFault, 6);
+  drawGeoDotted(hikurangi, 5);
 
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(174.78), mapLatToScreen(-41.28), 2, currentTheme.mapCity); // Wellington
@@ -1797,8 +1818,8 @@ void drawJapanMap() {
       }
     }
   };
-  drawDotted(japanTrench,  6, 0x3C14);   // Muted teal
-  drawDotted(nankaiTrough, 6, 0x3C14);   // Muted teal
+  drawDotted(japanTrench,  6, GEO_DIM);   // Muted teal
+  drawDotted(nankaiTrough, 6, GEO_DIM);   // Muted teal
 
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(139.69), mapLatToScreen(35.68), 2, currentTheme.mapCity); // Tokyo
@@ -1904,6 +1925,18 @@ void drawChinaMap() {
     tft.drawLine(mapLonToScreen(hainan[i][1]),   mapLatToScreen(hainan[i][0]),
                  mapLonToScreen(hainan[i+1][1]), mapLatToScreen(hainan[i+1][0]), currentTheme.mapOutline);
 
+  // Geological features (subtle) — major active fault systems
+  static const float longmenshan[][2] = {{30.6,103.0},{31.5,103.8},{32.4,104.7},{33.0,105.4}};
+  static const float kunlun[][2]      = {{35.5,90.0},{35.8,95.0},{35.9,99.0},{36.0,103.0}};
+  static const float altynTagh[][2]   = {{36.5,82.0},{37.5,87.0},{38.5,91.0},{39.5,94.5}};
+  static const float xianshuihe[][2]  = {{32.0,100.0},{30.8,101.4},{29.5,102.3},{28.0,103.0}};
+  static const float tianshan[][2]    = {{42.0,76.0},{42.4,82.0},{42.8,87.0},{43.2,92.0}};
+  drawGeoDotted(longmenshan, 4);
+  drawGeoDotted(kunlun, 4);
+  drawGeoDotted(altynTagh, 4);
+  drawGeoDotted(xianshuihe, 4);
+  drawGeoDotted(tianshan, 4);
+
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(116.40), mapLatToScreen(39.90), 2, currentTheme.mapCity); // Beijing
     tft.fillCircle(mapLonToScreen(121.47), mapLatToScreen(31.23), 2, currentTheme.mapCity); // Shanghai
@@ -2007,7 +2040,7 @@ void drawCaliforniaMap() {
     for (int s = 0; s <= steps; s += 2) {
       int px = x0 + s*(x1-x0)/max(steps,1), py = y0 + s*(y1-y0)/max(steps,1);
       if (px >= MAP_X && px <= MAP_X+MAP_WIDTH && py >= MAP_Y && py <= MAP_Y+MAP_HEIGHT)
-        tft.drawPixel(px, py, 0x3C14);   // Muted teal
+        tft.drawPixel(px, py, GEO_DIM);   // Muted teal
     }
   }
 
@@ -2026,7 +2059,7 @@ void drawCaliforniaMap() {
   int faultPts = sizeof(fault) / sizeof(fault[0]);
   for (int i = 0; i < faultPts - 1; i++) {
     tft.drawLine(mapLonToScreen(fault[i][1]), mapLatToScreen(fault[i][0]),
-                 mapLonToScreen(fault[i+1][1]), mapLatToScreen(fault[i+1][0]), 0xCB0B);   // Dusty coral
+                 mapLonToScreen(fault[i+1][1]), mapLatToScreen(fault[i+1][0]), GEO_DIM);   // San Andreas (subtle)
   }
 
   if (config.showCityDots) {
