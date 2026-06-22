@@ -1090,7 +1090,7 @@ int placeLineCount(const char* text, int maxW) {
 int drawPlaceName(const char* text, int cx, int y, int maxW) {
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  const int lineH = 12, base = 10;
+  const int lineH = 14, base = 10;     // roomier line spacing
   int len = strlen(text), pos = 0, lines = 0;
   char line[64];
   while (pos < len && lines < 3) {
@@ -1123,7 +1123,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
   int placeLines = q.isValid ? placeLineCount(q.location, maxW) : 1;
-  int contentH = 9 + 19 + (q.isValid ? (placeLines * 12 + 2 + 9) : 12);
+  int contentH = 9 + 18 + (q.isValid ? (placeLines * 14 + 2 + 9) : 12);
   int y = cellY + (cellH - contentH) / 2;
   if (y < cellY + 2) y = cellY + 2;
 
@@ -1148,7 +1148,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.setTextColor(accent);
   tft.setCursor(xL, y + 14);
   tft.print(m);
-  y += 19;
+  y += 18;
 
   // Place name
   y += drawPlaceName(q.location, xL, y, maxW);
@@ -2622,7 +2622,13 @@ void handleButton() {
   int16_t tx, ty;
   bool touching = readTouch(tx, ty);
 
-  // Rising edge of touch (finger just placed down)
+  // Debounced finger-down: a brief sensor drop-out mid-press is NOT a release,
+  // so one firm tap can't register twice (open settings then close on the bounce).
+  static unsigned long lastTouchSeen = 0;
+  if (touching) lastTouchSeen = now;
+  bool down = touching || (now - lastTouchSeen < 90);
+
+  // Rising edge of a genuine press
   if (touching && !prevTouching && (now - lastTouchTime > DEBOUNCE_DELAY)) {
     lastTouchTime = now;
     lastActivity  = now;
@@ -2635,8 +2641,8 @@ void handleButton() {
     if (showingRegionPicker) {
       int picked = regionAtPoint(sx, sy);
       if (picked >= 0) selectRegion(picked);                                   // chose a region
-      else if (sx > 280 && sy < 30 && now - pickerStartTime > 700) {           // cog closes
-        showingRegionPicker = false; drawUI();                                 // (guarded vs. a bounce right after opening)
+      else if (sx > 280 && sy < 30 && now - pickerStartTime > 300) {           // cog closes
+        showingRegionPicker = false; drawUI();
       }
       // else: ignore taps elsewhere on the settings screen
     } else if (sx > 280 && sy < 30) {
@@ -2648,7 +2654,7 @@ void handleButton() {
       lastAPICheck = now;
     }
   }
-  prevTouching = touching;
+  prevTouching = down;     // debounced — a flicker during a press won't re-arm the edge
 
   // ── Physical BOOT button fallback ────────────────────────────────────────
   if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress > DEBOUNCE_DELAY)) {
