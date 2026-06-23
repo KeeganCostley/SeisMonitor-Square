@@ -1063,56 +1063,105 @@ int drawNarrowText(const char* text, int x, int y, int maxW, uint16_t color) {
   return lines * lineH + 2;
 }
 
+// Convert a UTF-8 place name to renderable ASCII. Māori macron vowels
+// (ā ē ī ō ū + uppercase) collapse to their base letter and macronAt[] is set
+// true at that slot, so the caller can stroke a macron bar above it. Other
+// multi-byte UTF-8 runs are dropped cleanly. Returns the ASCII length.
+int demacron(const char* in, char* out, bool* macronAt, int maxOut) {
+  int o = 0;
+  for (int i = 0; in[i] && o < maxOut - 1; ) {
+    uint8_t c = (uint8_t)in[i];
+    if (c < 0x80) {                                   // plain ASCII
+      out[o] = in[i]; macronAt[o] = false; o++; i++;
+    } else if ((c == 0xC4 || c == 0xC5) && in[i + 1]) {
+      uint8_t d = (uint8_t)in[i + 1];
+      char base = 0;                                  // odd code point = lowercase
+      if (c == 0xC4) {
+        if      (d == 0x80 || d == 0x81) base = (d & 1) ? 'a' : 'A';   // Ā ā
+        else if (d == 0x92 || d == 0x93) base = (d & 1) ? 'e' : 'E';   // Ē ē
+        else if (d == 0xAA || d == 0xAB) base = (d & 1) ? 'i' : 'I';   // Ī ī
+      } else {                                        // 0xC5
+        if      (d == 0x8C || d == 0x8D) base = (d & 1) ? 'o' : 'O';   // Ō ō
+        else if (d == 0xAA || d == 0xAB) base = (d & 1) ? 'u' : 'U';   // Ū ū
+      }
+      if (base) { out[o] = base; macronAt[o] = true; o++; }
+      i += 2;                                         // consumed the 2-byte char
+    } else if (c >= 0xC0) {                           // other lead byte — skip its run
+      i++; while (((uint8_t)in[i] & 0xC0) == 0x80) i++;
+    } else { i++; }                                   // stray continuation byte
+  }
+  out[o] = '\0';
+  return o;
+}
+
 // Count how many lines a place name wraps to (FreeSans9pt, maxW), capped at 3.
 int placeLineCount(const char* text, int maxW) {
   tft.setFreeFont(FONT_LABEL);
-  int len = strlen(text), pos = 0, lines = 0; char ln[64];
+  char a[80]; bool m[80];
+  int len = demacron(text, a, m, sizeof(a));
+  int pos = 0, lines = 0; char ln[80];
   while (pos < len && lines < 3) {
-    int rem = min(len - pos, 63); strncpy(ln, text + pos, rem); ln[rem] = '\0';
+    int rem = min(len - pos, 79); strncpy(ln, a + pos, rem); ln[rem] = '\0';
     int end;
     if (tft.textWidth(ln) <= maxW) end = pos + rem;
     else {
       end = pos; int ls = -1;
-      for (int i = pos; i < len && i - pos < 63; i++) {
-        if (text[i] == ' ') ls = i;
-        int s = i + 1 - pos; strncpy(ln, text + pos, s); ln[s] = '\0';
+      for (int i = pos; i < len && i - pos < 79; i++) {
+        if (a[i] == ' ') ls = i;
+        int s = i + 1 - pos; strncpy(ln, a + pos, s); ln[s] = '\0';
         if (tft.textWidth(ln) > maxW) { end = (ls > pos) ? ls : i; break; }
         end = i + 1;
       }
     }
     if (end <= pos) end = pos + 1;
-    lines++; pos = end; while (pos < len && text[pos] == ' ') pos++;
+    lines++; pos = end; while (pos < len && a[pos] == ' ') pos++;
   }
   return lines < 1 ? 1 : lines;
 }
 
-// Place name — up to 3 lines, FreeSans9pt regular, centred at cx. Returns height.
+// Place name — up to 3 lines, FreeSans9pt regular, left edge at cx. Māori macrons
+// are stroked as a bar above the vowel. Returns height.
 int drawPlaceName(const char* text, int cx, int y, int maxW) {
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
   const int lineH = 14, base = 10;     // roomier line spacing
-  int len = strlen(text), pos = 0, lines = 0;
-  char line[64];
+  char a[80]; bool m[80];
+  int len = demacron(text, a, m, sizeof(a));
+  int pos = 0, lines = 0;
+  char line[80];
   while (pos < len && lines < 3) {
-    int rem = min(len - pos, 63); strncpy(line, text + pos, rem); line[rem] = '\0';
+    int rem = min(len - pos, 79); strncpy(line, a + pos, rem); line[rem] = '\0';
     int end;
     if (tft.textWidth(line) <= maxW) end = pos + rem;
     else {
       end = pos; int lastSpace = -1;
-      for (int i = pos; i < len && i - pos < 63; i++) {
-        if (text[i] == ' ') lastSpace = i;
-        int seg = i + 1 - pos; strncpy(line, text + pos, seg); line[seg] = '\0';
+      for (int i = pos; i < len && i - pos < 79; i++) {
+        if (a[i] == ' ') lastSpace = i;
+        int seg = i + 1 - pos; strncpy(line, a + pos, seg); line[seg] = '\0';
         if (tft.textWidth(line) > maxW) { end = (lastSpace > pos) ? lastSpace : i; break; }
         end = i + 1;
       }
     }
     int pl = end - pos; if (pl <= 0) pl = 1;
-    strncpy(line, text + pos, pl); line[pl] = '\0';
+    strncpy(line, a + pos, pl); line[pl] = '\0';
     while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
-    tft.setCursor(cx, y + lines * lineH + base);     // cx used as the left edge
+    int lineY = y + lines * lineH + base;
+    tft.setCursor(cx, lineY);
     tft.print(line);
+
+    // Stroke macron bars above any flagged vowels on this line
+    for (int k = 0; k < pl; k++) {
+      if (!m[pos + k]) continue;
+      char pre[80]; strncpy(pre, line, k); pre[k] = '\0';
+      int vx = cx + tft.textWidth(pre);
+      char ch[2] = { line[k], '\0' };
+      int vw = tft.textWidth(ch);
+      bool upper = (line[k] >= 'A' && line[k] <= 'Z');
+      int barY = lineY - (upper ? 15 : 12);
+      tft.drawFastHLine(vx + 1, barY, (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
+    }
     lines++;
-    pos = end; while (pos < len && text[pos] == ' ') pos++;
+    pos = end; while (pos < len && a[pos] == ' ') pos++;
     if (pos >= len) break;
   }
   return lines * lineH + 2;
@@ -2420,17 +2469,24 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   // ── Data below reticle ──
   int dataY = cy + outerR + 16;
 
-  // Location (truncate if too wide)
+  // Location (demacron, truncate if too wide, centred)
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  char locBuf[64];
-  strncpy(locBuf, quake->location, sizeof(locBuf) - 1);
-  locBuf[sizeof(locBuf) - 1] = '\0';
-  while (strlen(locBuf) > 3 && tft.textWidth(locBuf) > 300) {
-    locBuf[strlen(locBuf) - 1] = '\0';
-  }
-  tft.setCursor(160 - tft.textWidth(locBuf) / 2, dataY + 11);
+  char locBuf[80]; bool locMac[80];
+  int locLen = demacron(quake->location, locBuf, locMac, sizeof(locBuf));
+  while (locLen > 3 && tft.textWidth(locBuf) > 300) locBuf[--locLen] = '\0';
+  int locX = 160 - tft.textWidth(locBuf) / 2, locBaseY = dataY + 11;
+  tft.setCursor(locX, locBaseY);
   tft.print(locBuf);
+  for (int k = 0; k < locLen; k++) {
+    if (!locMac[k]) continue;
+    char pre[80]; strncpy(pre, locBuf, k); pre[k] = '\0';
+    int vx = locX + tft.textWidth(pre);
+    char ch[2] = { locBuf[k], '\0' };
+    int vw = tft.textWidth(ch);
+    bool upper = (locBuf[k] >= 'A' && locBuf[k] <= 'Z');
+    tft.drawFastHLine(vx + 1, locBaseY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
+  }
 
   // Depth
   char depthBuf[32];
