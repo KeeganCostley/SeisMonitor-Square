@@ -780,19 +780,24 @@ void loop() {
     lastSeismoUpdate = now;
   }
 
-  // Live epicenter ping — radiate rings for 10 min after the quake's origin time
+  // Live epicenter pulse — a ~2s burst of radiating rings on the LATEST quake
+  // every 5 min, to give the display a little life (first burst 15s after data).
   {
-    time_t te = time(nullptr);
-    bool pingNow = latestQuake.isValid && te > 1600000000 && latestQuake.timestamp > 0 &&
-                   ((unsigned long)te - latestQuake.timestamp) < 600UL &&
-                   strcmp(config.region, "Global") != 0;   // globe handles its own markers
-    if (pingNow && now - lastMapPing > 240) {
-      animateMapPing();
-      lastMapPing = now;
-    } else if (!pingNow && mapPingWasActive) {
-      updateMapEarthquakeMarkers();   // window ended — clear the last ring
+    static unsigned long nextPulse = 0, pulseStart = 0;
+    static bool pulseActive = false;
+    bool canPulse = latestQuake.isValid && strcmp(config.region, "Global") != 0;   // globe self-animates
+    if (canPulse) {
+      if (nextPulse == 0) nextPulse = now + 15000UL;
+      if (!pulseActive && now >= nextPulse) { pulseActive = true; pulseStart = now; nextPulse = now + 300000UL; }
     }
-    mapPingWasActive = pingNow;
+    if (pulseActive) {
+      if (now - pulseStart < 2000UL) {
+        if (now - lastMapPing > 200) { animateMapPing(); lastMapPing = now; }
+      } else {
+        pulseActive = false;
+        updateMapEarthquakeMarkers();   // restore the clean marker after the burst
+      }
+    }
   }
 
   // Spin the globe (Global region) — off-screen render + push, flicker-free
@@ -1121,10 +1126,10 @@ int placeLineCount(const char* text, int maxW) {
 
 // Place name — up to 3 lines, FreeSans9pt regular, left edge at cx. Māori macrons
 // are stroked as a bar above the vowel. Returns height.
-int drawPlaceName(const char* text, int cx, int y, int maxW, int lineH) {
+int drawPlaceName(const char* text, int cx, int y, int maxW) {
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  const int base = 10;
+  const int lineH = 14, base = 10;
   char a[80]; bool m[80];
   int len = demacron(text, a, m, sizeof(a));
   int pos = 0, lines = 0;
@@ -1164,7 +1169,7 @@ int drawPlaceName(const char* text, int cx, int y, int maxW, int lineH) {
     pos = end; while (pos < len && a[pos] == ' ') pos++;
     if (pos >= len) break;
   }
-  return lines * lineH + 2;
+  return lines * lineH;
 }
 
 // One left-aligned data cell: ◆ LABEL / M#.# / place / meta, vertically centred.
@@ -1172,8 +1177,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
   int placeLines = q.isValid ? placeLineCount(q.location, maxW) : 1;
-  int lineH = (placeLines >= 3) ? 12 : 14;   // 3 lines compress to fit the cell; 1-2 stay roomy
-  int contentH = 9 + 18 + (q.isValid ? (placeLines * lineH + 2 + 9) : 12);
+  int contentH = 9 + 16 + (q.isValid ? (placeLines * 14 + 8) : 12);   // roomy 14px lines, fits w/ margin
   int y = cellY + (cellH - contentH) / 2;
   if (y < cellY + 2) y = cellY + 2;
 
@@ -1198,10 +1202,10 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.setTextColor(accent);
   tft.setCursor(xL, y + 14);
   tft.print(m);
-  y += 18;
+  y += 16;
 
   // Place name
-  y += drawPlaceName(q.location, xL, y, maxW, lineH);
+  y += drawPlaceName(q.location, xL, y, maxW);
 
   // Meta: "#M AGO · #KM"
   String ago = getTimeAgo(q.timestamp); ago.toUpperCase();
@@ -2699,12 +2703,12 @@ void handleButton() {
       Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
 
       if (showingRegionPicker) {
-        int picked = regionAtPoint(sx, sy);
-        if (picked >= 0) selectRegion(picked);                        // chose a region
-        else if (sx > 280 && sy < 30 && now - pickerStartTime > 400) {
-          showingRegionPicker = false; drawUI();                      // cog closes (guard vs. open bounce)
+        if (now - pickerStartTime > 600) {        // hard lock: the opening tap (and any
+          int picked = regionAtPoint(sx, sy);     // bounce/double-tap within 600ms) cannot act
+          if (picked >= 0) selectRegion(picked);                      // chose a region
+          else if (sx > 280 && sy < 30) { showingRegionPicker = false; drawUI(); }   // cog closes
         }
-        // else: ignore taps elsewhere on the settings screen
+        // else: ignore taps elsewhere / within the open lock
       } else if (sx > 280 && sy < 30) {
         drawRegionPicker();                                           // gear (top-right) → settings
       } else {
@@ -2724,8 +2728,7 @@ void handleButton() {
     lastActivity    = now;
     isRestMode      = false;
     if (showingRegionPicker) {
-      showingRegionPicker = false;
-      drawUI();
+      if (now - pickerStartTime > 600) { showingRegionPicker = false; drawUI(); }
     } else {
       checkForEarthquakes();
       updateDataRegion();
