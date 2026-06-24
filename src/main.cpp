@@ -931,7 +931,7 @@ void drawHeader() {
   int dx = tft.getCursorX();
   tft.fillCircle(dx + 1, 11, 1, acc);                 // · separator
   tft.setCursor(dx + 4, 7);
-  tft.print(strcmp(config.region, "NZ") == 0 ? "AOTEAROA" : config.region);   // Te Reo for home
+  tft.print(strcmp(config.region, "NZ") == 0 ? "AOTEAROA NZ" : config.region);   // bicultural name
 
   // ── Right: HH:MM · WIFI + cog (secondary) ──
   uint16_t sec = currentTheme.textSecondary;
