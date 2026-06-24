@@ -132,7 +132,7 @@ const int MAP_BOX_H = 190;
 // Soft-green structural panel borders (June-20 handoff)
 const uint16_t PANEL_EDGE     = 0x2246;          // #234a36
 const uint16_t PANEL_EDGE_DIM = 0x1183;          // #16301f
-const uint16_t GEO_DIM        = 0x19C5;          // very dark green — subtle fault/trench texture
+const uint16_t GEO_DIM        = 0x2B69;          // muted green — visible-but-subtle fault/trench texture
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REGIONAL BOUNDARIES
@@ -1121,10 +1121,10 @@ int placeLineCount(const char* text, int maxW) {
 
 // Place name — up to 3 lines, FreeSans9pt regular, left edge at cx. Māori macrons
 // are stroked as a bar above the vowel. Returns height.
-int drawPlaceName(const char* text, int cx, int y, int maxW) {
+int drawPlaceName(const char* text, int cx, int y, int maxW, int lineH) {
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  const int lineH = 14, base = 10;     // roomier line spacing
+  const int base = 10;
   char a[80]; bool m[80];
   int len = demacron(text, a, m, sizeof(a));
   int pos = 0, lines = 0;
@@ -1172,7 +1172,8 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
   int placeLines = q.isValid ? placeLineCount(q.location, maxW) : 1;
-  int contentH = 9 + 18 + (q.isValid ? (placeLines * 14 + 2 + 9) : 12);
+  int lineH = (placeLines >= 3) ? 12 : 14;   // 3 lines compress to fit the cell; 1-2 stay roomy
+  int contentH = 9 + 18 + (q.isValid ? (placeLines * lineH + 2 + 9) : 12);
   int y = cellY + (cellH - contentH) / 2;
   if (y < cellY + 2) y = cellY + 2;
 
@@ -1200,7 +1201,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   y += 18;
 
   // Place name
-  y += drawPlaceName(q.location, xL, y, maxW);
+  y += drawPlaceName(q.location, xL, y, maxW, lineH);
 
   // Meta: "#M AGO · #KM"
   String ago = getTimeAgo(q.timestamp); ago.toUpperCase();
@@ -2675,42 +2676,47 @@ void handleButton() {
   unsigned long now = millis();
 
   // ── Capacitive touch tap ─────────────────────────────────────────────────
+  // Fire ONE action per press, ~45ms after first contact so the FT6336G's
+  // (often noisy) first coordinate has settled — then don't re-arm until the
+  // finger has been confirmed up for 80ms. This kills both the phantom
+  // double-tap (flash-open-then-close) and the missed/misplaced first read.
   int16_t tx, ty;
   bool touching = readTouch(tx, ty);
 
-  // Debounced finger-down: a brief sensor drop-out mid-press is NOT a release,
-  // so one firm tap can't register twice (open settings then close on the bounce).
-  static unsigned long lastTouchSeen = 0;
-  if (touching) lastTouchSeen = now;
-  bool down = touching || (now - lastTouchSeen < 90);
+  static unsigned long pressStart = 0, lastSeen = 0;
+  static bool pressActed = false;
 
-  // Rising edge of a genuine press
-  if (touching && !prevTouching && (now - lastTouchTime > DEBOUNCE_DELAY)) {
-    lastTouchTime = now;
-    lastActivity  = now;
-    isRestMode    = false;
+  if (touching) {
+    if (pressStart == 0) pressStart = now;
+    lastSeen = now;
+    if (!pressActed && (now - pressStart >= 45)) {
+      pressActed   = true;
+      lastActivity = now;
+      isRestMode   = false;
 
-    int16_t sx, sy;
-    mapTouch(tx, ty, sx, sy);
-    Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
+      int16_t sx, sy;
+      mapTouch(tx, ty, sx, sy);
+      Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
 
-    if (showingRegionPicker) {
-      int picked = regionAtPoint(sx, sy);
-      if (picked >= 0) selectRegion(picked);                                   // chose a region
-      else if (sx > 280 && sy < 30 && now - pickerStartTime > 300) {           // cog closes
-        showingRegionPicker = false; drawUI();
+      if (showingRegionPicker) {
+        int picked = regionAtPoint(sx, sy);
+        if (picked >= 0) selectRegion(picked);                        // chose a region
+        else if (sx > 280 && sy < 30 && now - pickerStartTime > 400) {
+          showingRegionPicker = false; drawUI();                      // cog closes (guard vs. open bounce)
+        }
+        // else: ignore taps elsewhere on the settings screen
+      } else if (sx > 280 && sy < 30) {
+        drawRegionPicker();                                           // gear (top-right) → settings
+      } else {
+        checkForEarthquakes();                                        // elsewhere → refresh data
+        updateDataRegion();
+        updateMapEarthquakeMarkers();
+        lastAPICheck = now;
       }
-      // else: ignore taps elsewhere on the settings screen
-    } else if (sx > 280 && sy < 30) {
-      drawRegionPicker();                                // gear (top-right) → location picker
-    } else {
-      checkForEarthquakes();                             // elsewhere → refresh data
-      updateDataRegion();
-      updateMapEarthquakeMarkers();
-      lastAPICheck = now;
     }
+  } else if (now - lastSeen > 80) {
+    pressStart = 0; pressActed = false;                               // confirmed release → re-arm
   }
-  prevTouching = down;     // debounced — a flicker during a press won't re-arm the edge
 
   // ── Physical BOOT button fallback ────────────────────────────────────────
   if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress > DEBOUNCE_DELAY)) {
