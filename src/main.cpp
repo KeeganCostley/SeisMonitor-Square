@@ -2688,7 +2688,7 @@ void handleButton() {
   bool touching = readTouch(tx, ty);
 
   static unsigned long pressStart = 0, lastSeen = 0;
-  static bool pressActed = false;
+  static bool pressActed = false, releasedSinceOpen = true;
 
   if (touching) {
     if (pressStart == 0) pressStart = now;
@@ -2700,17 +2700,23 @@ void handleButton() {
 
       int16_t sx, sy;
       mapTouch(tx, ty, sx, sy);
-      Serial.printf("Touch raw(%d,%d) -> screen(%d,%d)\n", tx, ty, sx, sy);
+      Serial.printf("TOUCH (%d,%d) picker=%d released=%d dt=%ld\n",
+                    sx, sy, (int)showingRegionPicker, (int)releasedSinceOpen,
+                    (long)(now - pickerStartTime));
 
       if (showingRegionPicker) {
-        if (now - pickerStartTime > 600) {        // hard lock: the opening tap (and any
-          int picked = regionAtPoint(sx, sy);     // bounce/double-tap within 600ms) cannot act
-          if (picked >= 0) selectRegion(picked);                      // chose a region
-          else if (sx > 280 && sy < 30) { showingRegionPicker = false; drawUI(); }   // cog closes
+        // Act ONLY after a real finger-lift since opening (+ a short lock). The
+        // opening press — even with a sensor drop-out under 300ms — keeps
+        // releasedSinceOpen false, so it can never select a region or close.
+        if (releasedSinceOpen && (now - pickerStartTime > 400)) {
+          int picked = regionAtPoint(sx, sy);
+          if (picked >= 0)              { Serial.println("  -> select region"); selectRegion(picked); }
+          else if (sx > 280 && sy < 30) { Serial.println("  -> cog close");     showingRegionPicker = false; drawUI(); }
         }
-        // else: ignore taps elsewhere / within the open lock
       } else if (sx > 280 && sy < 30) {
+        Serial.println("  -> OPEN picker");
         drawRegionPicker();                                           // gear (top-right) → settings
+        releasedSinceOpen = false;                                    // require a lift before any action
       } else {
         checkForEarthquakes();                                        // elsewhere → refresh data
         updateDataRegion();
@@ -2718,8 +2724,8 @@ void handleButton() {
         lastAPICheck = now;
       }
     }
-  } else if (now - lastSeen > 80) {
-    pressStart = 0; pressActed = false;                               // confirmed release → re-arm
+  } else if (now - lastSeen > 300) {                                  // finger confirmed UP for 300ms
+    pressStart = 0; pressActed = false; releasedSinceOpen = true;     // re-arm + allow settings taps
   }
 
   // ── Physical BOOT button fallback ────────────────────────────────────────
