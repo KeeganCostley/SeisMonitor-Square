@@ -2517,7 +2517,8 @@ const int PICK_H     = 24;
 const int PICK_PITCH = 28;
 
 // Settings screen — REGION rows (left) + WIFI connection details (right).
-// Tap a region to switch; tap the cog (top-right) / BOOT / 30s to close.
+// Tap a region to switch; tap < (top-left) / BOOT / 30s to close. The top-right gear
+// does NOT close (that corner is where the recurring phantom second-tap landed).
 void drawRegionPicker() {
   showingRegionPicker = true;
   pickerStartTime = millis();
@@ -2527,9 +2528,10 @@ void drawRegionPicker() {
   tft.drawFastHLine(0, HEADER_H - 1, SCREEN_WIDTH, currentTheme.border);
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.textAccent);
-  tft.setCursor(8, 7);
+  tft.drawRoundRect(3, 2, 72, 17, 2, currentTheme.textAccent);   // tappable BACK / close affordance
+  tft.setCursor(9, 7);
   tft.print("< SETTINGS");
-  drawGearIcon(GEAR_CX, GEAR_CY, currentTheme.dataLatest);   // accent = active
+  drawGearIcon(GEAR_CX, GEAR_CY, currentTheme.dataLatest);   // accent = active (does not close)
 
   tft.drawFastVLine(160, HEADER_H, SCREEN_HEIGHT - HEADER_H, currentTheme.divider);
 
@@ -2603,7 +2605,7 @@ void drawRegionPicker() {
   tft.drawFastHLine(0, SCREEN_HEIGHT - 16, SCREEN_WIDTH, currentTheme.border);
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.sub);
-  tft.drawCentreString("TAP REGION TO SWITCH    TAP GEAR TO CLOSE", 160, SCREEN_HEIGHT - 11, 1);
+  tft.drawCentreString("TAP REGION TO SWITCH    TAP < TO CLOSE", 160, SCREEN_HEIGHT - 11, 1);
 }
 
 // Returns picker row 0..4 under a screen point, or -1 if none.
@@ -2710,8 +2712,10 @@ void handleButton() {
         // releasedSinceOpen false, so it can never select a region or close.
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
-          if (picked >= 0)              { Serial.println("  -> select region"); selectRegion(picked); }
-          else if (sx > 280 && sy < 30) { Serial.println("  -> cog close");     showingRegionPicker = false; drawUI(); }
+          if (picked >= 0)             { Serial.println("  -> select region"); selectRegion(picked); }
+          else if (sx < 90 && sy < 30) { Serial.println("  -> back close");    showingRegionPicker = false; drawUI(); }
+          // The top-RIGHT gear corner deliberately does NOT close — that is exactly where the
+          // recurring phantom second-tap kept landing. Close via < (top-left) / region / BOOT.
         }
       } else if (sx > 280 && sy < 30) {
         Serial.println("  -> OPEN picker");
