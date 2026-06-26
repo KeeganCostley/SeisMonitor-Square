@@ -2719,6 +2719,21 @@ void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy) {
   sy = (int16_t)constrain((int)sy, 0, SCREEN_HEIGHT - 1);
 }
 
+// Diagnostic: if the picker closes suspiciously soon (<4s) after opening — the
+// recurring "flash" — show WHY + the touch coords for ~1.6s so we can finally see
+// what's firing. A normal close (after browsing) is >4s and shows nothing.
+void pickerCloseDiag(const char* why, int sx, int sy) {
+  if (millis() - pickerStartTime >= 4000) return;
+  tft.fillScreen(currentTheme.background);
+  tft.setTextColor(currentTheme.textAccent);
+  char buf[40];
+  snprintf(buf, sizeof(buf), "CLOSED: %s", why);
+  tft.drawCentreString(buf, 160, 95, 2);
+  snprintf(buf, sizeof(buf), "(%d,%d)", sx, sy);
+  tft.drawCentreString(buf, 160, 122, 2);
+  delay(1600);
+}
+
 void handleButton() {
   if (showingAlert) return;
 
@@ -2755,10 +2770,9 @@ void handleButton() {
         // releasedSinceOpen false, so it can never select a region or close.
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
-          if (picked >= 0)             { Serial.println("  -> select region"); selectRegion(picked); }
-          else if (sx < 90 && sy < 30) { Serial.println("  -> back close");    showingRegionPicker = false; drawUI(); }
-          // The top-RIGHT gear corner deliberately does NOT close — that is exactly where the
-          // recurring phantom second-tap kept landing. Close via < (top-left) / region / BOOT.
+          if (picked >= 0)             { pickerCloseDiag("REGION", sx, sy); selectRegion(picked); }
+          else if (sx < 90 && sy < 30) { pickerCloseDiag("BACK", sx, sy); showingRegionPicker = false; drawUI(); }
+          // Gear corner (top-right) deliberately does NOT close.
         }
       } else if (sx > 280 && sy < 30) {
         Serial.println("  -> OPEN picker");
@@ -2775,19 +2789,18 @@ void handleButton() {
     pressStart = 0; pressActed = false; releasedSinceOpen = true;     // re-arm + allow settings taps
   }
 
-  // ── Physical BOOT button fallback ────────────────────────────────────────
-  if (digitalRead(BUTTON_PIN) == LOW && (now - lastButtonPress > DEBOUNCE_DELAY)) {
-    lastButtonPress = now;
-    lastActivity    = now;
-    isRestMode      = false;
-    if (showingRegionPicker) {
-      if (now - pickerStartTime > 600) { showingRegionPicker = false; drawUI(); }
-    } else {
-      checkForEarthquakes();
-      updateDataRegion();
-      updateMapEarthquakeMarkers();
-      lastAPICheck = now;
+  // ── Physical BOOT button (GPIO0) — debounced so electrical noise can't fire it,
+  //    and it NEVER closes the picker (the suspected by-itself flash-close). It only
+  //    refreshes the main screen, and only after a sustained (>80ms) press. ───────
+  static unsigned long bootLowSince = 0;
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    if (bootLowSince == 0) bootLowSince = now;
+    if (now - bootLowSince > 80 && now - lastButtonPress > DEBOUNCE_DELAY && !showingRegionPicker) {
+      lastButtonPress = now; lastActivity = now; isRestMode = false;
+      checkForEarthquakes(); updateDataRegion(); updateMapEarthquakeMarkers(); lastAPICheck = now;
     }
+  } else {
+    bootLowSince = 0;
   }
 }
 
