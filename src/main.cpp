@@ -541,6 +541,7 @@ void drawMap();
 void drawMapGraticule(uint16_t color);
 void animateMapPing();
 void updateMapEarthquakeMarkers();
+void updateDataRegion();
 void drawHeader();
 
 void drawNZMap();
@@ -809,7 +810,16 @@ void loop() {
   }
 
   if (now - lastAPICheck > API_POLL_INTERVAL) {
+    unsigned long lT = latestQuake.timestamp, hT = highestRegionalQuake.timestamp;
+    float         lM = latestQuake.magnitude, hM = highestRegionalQuake.magnitude;
     checkForEarthquakes();
+    // Repaint BOTH the data block and the map when a poll changes the latest/highest
+    // quake — otherwise the map (repainted by the pulse) and the cells drift out of sync.
+    if (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
+        highestRegionalQuake.timestamp != hT || highestRegionalQuake.magnitude != hM) {
+      updateDataRegion();
+      updateMapEarthquakeMarkers();
+    }
     lastAPICheck = now;
   }
   
