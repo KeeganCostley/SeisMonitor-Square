@@ -1109,13 +1109,23 @@ int demacron(const char* in, char* out, bool* macronAt, int maxOut) {
   return o;
 }
 
-// Count how many lines a place name wraps to (FreeSans9pt, maxW), capped at 3.
-int placeLineCount(const char* text, int maxW) {
-  tft.setFreeFont(FONT_LABEL);
-  char a[80]; bool m[80];
-  int len = demacron(text, a, m, sizeof(a));
+// Abbreviate GeoNet/USGS boilerplate so long names fit: "<n> km <dir> of" -> "<n>km <DIR> of".
+void abbreviatePlace(const char* in, char* out, int maxOut) {
+  if (!in) { out[0] = '\0'; return; }
+  String s = in;
+  s.replace(" km ", "km ");
+  s.replace(" north-west of ", " NW of "); s.replace(" north-east of ", " NE of ");
+  s.replace(" south-west of ", " SW of "); s.replace(" south-east of ", " SE of ");
+  s.replace(" north of ", " N of ");       s.replace(" south of ", " S of ");
+  s.replace(" east of ", " E of ");        s.replace(" west of ", " W of ");
+  strncpy(out, s.c_str(), maxOut - 1); out[maxOut - 1] = '\0';
+}
+
+// Wrap demacron'd ASCII `a` at the CURRENT font into <= maxLines; returns line
+// count and sets `overflow` true if text remained past the cap.
+static int wrapMeasure(const char* a, int len, int maxW, int maxLines, bool& overflow) {
   int pos = 0, lines = 0; char ln[80];
-  while (pos < len && lines < 3) {
+  while (pos < len && lines < maxLines) {
     int rem = min(len - pos, 79); strncpy(ln, a + pos, rem); ln[rem] = '\0';
     int end;
     if (tft.textWidth(ln) <= maxW) end = pos + rem;
@@ -1131,20 +1141,43 @@ int placeLineCount(const char* text, int maxW) {
     if (end <= pos) end = pos + 1;
     lines++; pos = end; while (pos < len && a[pos] == ' ') pos++;
   }
+  overflow = (pos < len);
   return lines < 1 ? 1 : lines;
 }
 
-// Place name — up to 3 lines, FreeSans9pt regular, left edge at cx. Māori macrons
-// are stroked as a bar above the vowel. Returns height.
-int drawPlaceName(const char* text, int cx, int y, int maxW) {
+// Choose font for a place name: FreeSans9pt if it fits in 3 lines, else the
+// smaller built-in Font 1 (up to 5 lines) so long names still fit. Sets small + lineH.
+static int placeLayout(const char* a, int len, int maxW, bool& small, int& lineH) {
+  bool ov;
   tft.setFreeFont(FONT_LABEL);
-  tft.setTextColor(currentTheme.textPrimary);
-  const int lineH = 14, base = 10;
+  int n = wrapMeasure(a, len, maxW, 3, ov);
+  if (!ov) { small = false; lineH = 14; return n; }
+  tft.setTextFont(1);
+  n = wrapMeasure(a, len, maxW, 5, ov);
+  small = true; lineH = 10; return n;
+}
+
+// Pixel height the place name will occupy (matches drawPlaceName's font choice).
+int placeNameHeight(const char* text, int maxW) {
   char a[80]; bool m[80];
   int len = demacron(text, a, m, sizeof(a));
-  int pos = 0, lines = 0;
-  char line[80];
-  while (pos < len && lines < 3) {
+  bool small; int lineH;
+  return placeLayout(a, len, maxW, small, lineH) * lineH;
+}
+
+// Place name — auto-fits: FreeSans9pt (3 lines, with Māori macron bars) or the
+// smaller built-in Font 1 (up to 5 lines) for long names. Left edge at cx. Returns height.
+int drawPlaceName(const char* text, int cx, int y, int maxW) {
+  char a[80]; bool m[80];
+  int len = demacron(text, a, m, sizeof(a));
+  bool small; int lineH;
+  placeLayout(a, len, maxW, small, lineH);          // sets font + small + lineH
+  int maxLines = small ? 5 : 3;
+  if (small) tft.setTextFont(1); else tft.setFreeFont(FONT_LABEL);
+  tft.setTextColor(currentTheme.textPrimary);
+  int base = small ? 8 : 10;
+  int pos = 0, lines = 0; char line[80];
+  while (pos < len && lines < maxLines) {
     int rem = min(len - pos, 79); strncpy(line, a + pos, rem); line[rem] = '\0';
     int end;
     if (tft.textWidth(line) <= maxW) end = pos + rem;
@@ -1164,16 +1197,16 @@ int drawPlaceName(const char* text, int cx, int y, int maxW) {
     tft.setCursor(cx, lineY);
     tft.print(line);
 
-    // Stroke macron bars above any flagged vowels on this line
-    for (int k = 0; k < pl; k++) {
-      if (!m[pos + k]) continue;
-      char pre[80]; strncpy(pre, line, k); pre[k] = '\0';
-      int vx = cx + tft.textWidth(pre);
-      char ch[2] = { line[k], '\0' };
-      int vw = tft.textWidth(ch);
-      bool upper = (line[k] >= 'A' && line[k] <= 'Z');
-      int barY = lineY - (upper ? 15 : 12);
-      tft.drawFastHLine(vx + 1, barY, (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
+    if (!small) {   // Māori macron bars (FreeSans9pt path only)
+      for (int k = 0; k < pl; k++) {
+        if (!m[pos + k]) continue;
+        char pre[80]; strncpy(pre, line, k); pre[k] = '\0';
+        int vx = cx + tft.textWidth(pre);
+        char ch[2] = { line[k], '\0' };
+        int vw = tft.textWidth(ch);
+        bool upper = (line[k] >= 'A' && line[k] <= 'Z');
+        tft.drawFastHLine(vx + 1, lineY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
+      }
     }
     lines++;
     pos = end; while (pos < len && a[pos] == ' ') pos++;
@@ -1186,8 +1219,8 @@ int drawPlaceName(const char* text, int cx, int y, int maxW) {
 void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, uint16_t accent) {
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
-  int placeLines = q.isValid ? placeLineCount(q.location, maxW) : 1;
-  int contentH = 9 + 16 + (q.isValid ? (placeLines * 14 + 8) : 12);   // roomy 14px lines, fits w/ margin
+  int placeH = q.isValid ? placeNameHeight(q.location, maxW) : 0;
+  int contentH = 9 + 16 + (q.isValid ? (placeH + 8) : 12);   // place block auto-sizes to its font
   int y = cellY + (cellH - contentH) / 2;
   if (y < cellY + 2) y = cellY + 2;
 
@@ -2314,13 +2347,13 @@ void checkForEarthquakes() {
       highestRegionalQuake.latitude = h["geometry"]["coordinates"][1];
       highestRegionalQuake.longitude = h["geometry"]["coordinates"][0];
       highestRegionalQuake.depth = h["properties"]["depth"];
-      strncpy(highestRegionalQuake.location, h["properties"]["locality"], sizeof(highestRegionalQuake.location) - 1);
+      abbreviatePlace(h["properties"]["locality"] | "", highestRegionalQuake.location, sizeof(highestRegionalQuake.location));
       highestRegionalQuake.timestamp = parseISOToEpoch(h["properties"]["time"].as<const char*>());
     } else {
       highestRegionalQuake.latitude = h["geometry"]["coordinates"][1];
       highestRegionalQuake.longitude = h["geometry"]["coordinates"][0];
       highestRegionalQuake.depth = h["geometry"]["coordinates"][2];
-      strncpy(highestRegionalQuake.location, h["properties"]["place"], sizeof(highestRegionalQuake.location) - 1);
+      abbreviatePlace(h["properties"]["place"] | "", highestRegionalQuake.location, sizeof(highestRegionalQuake.location));
       highestRegionalQuake.timestamp = (unsigned long)(h["properties"]["time"].as<double>() / 1000.0);
     }
     
@@ -2383,7 +2416,7 @@ void checkForEarthquakes() {
       latestQuake.latitude = lat;
       latestQuake.longitude = lon;
       latestQuake.depth = depth;
-      strncpy(latestQuake.location, loc, sizeof(latestQuake.location) - 1);
+      abbreviatePlace(loc, latestQuake.location, sizeof(latestQuake.location));
       
       // Use actual earthquake timestamp from API - convert to epoch seconds
       if (usingNZ) {
