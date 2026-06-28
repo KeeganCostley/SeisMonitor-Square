@@ -618,7 +618,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.5", 8, 228, 1);
+    tft.drawString("v3.6", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1252,10 +1252,10 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   }
 
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
-  tft.setFreeFont(FONT_MAG);
+  tft.setFreeFont(FONT_DATA);                        // compact bold — stands out by weight, not size
   tft.setTextColor(accent);
   int mw = tft.textWidth(m);
-  tft.setCursor(xL + maxW - mw, topY + 16);          // bigger hero magnitude, right-aligned
+  tft.setCursor(xL + maxW - mw, topY + 14);          // right-aligned, centred on the label row
   tft.print(m);
 
   // ── Meta pinned to the bottom of the cell (always visible) ──
@@ -1272,7 +1272,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.print(dep);
 
   // ── Place name fills the gap between row 1 and the meta (one font, never overlaps) ──
-  int placeTop = topY + 22;
+  int placeTop = topY + 18;
   drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
 }
 
@@ -1282,7 +1282,7 @@ void drawDataPanel() {
   drawDataCell(DATA_Y, cellH, latestQuake, "LATEST", currentTheme.dataLatest);
   int divY = DATA_Y + cellH;
   tft.drawFastHLine(DATA_X + 8, divY, DATA_WIDTH - 16, PANEL_EDGE_DIM);
-  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H", currentTheme.dataHighest);
+  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H MAX", currentTheme.dataHighest);
   tft.drawRoundRect(DATA_X, DATA_Y, DATA_WIDTH, DATA_HEIGHT, 3, PANEL_EDGE);
 }
 
