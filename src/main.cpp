@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.8", 8, 228, 1);
+    tft.drawString("v3.9", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -812,8 +812,8 @@ void loop() {
   }
 
   // Spin the globe (Global region) — off-screen render + push, flicker-free
-  if (globeSprReady && strcmp(config.region, "Global") == 0 && now - lastGlobeFrame > 120) {
-    globeRot += 0.016f;   // slower spin; longer interval frees the loop (less lag)
+  if (globeSprReady && strcmp(config.region, "Global") == 0 && now - lastGlobeFrame > 90) {
+    globeRot += 0.012f;   // smaller step + shorter interval = smoother at the same spin speed
     if (globeRot > 6.2831853f) globeRot -= 6.2831853f;
     drawGlobalMap();
     lastGlobeFrame = now;
@@ -1128,6 +1128,12 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
   // directions stay spelled out (north/south/east/west) per preference.
   s.replace(" north-west of ", " NW of "); s.replace(" north-east of ", " NE of ");
   s.replace(" south-west of ", " SW of "); s.replace(" south-east of ", " SE of ");
+  // Global view: the country matters more than the distance from a small town, and
+  // long "City, Country" names truncate — so drop the leading "<dist>km <dir> of ".
+  if (strcmp(config.region, "Global") == 0) {
+    int ofIdx = s.indexOf(" of ");
+    if (ofIdx >= 0 && ofIdx < 15) s = s.substring(ofIdx + 4);
+  }
   strncpy(out, s.c_str(), maxOut - 1); out[maxOut - 1] = '\0';
 }
 
@@ -2202,20 +2208,21 @@ template<class T>
 void renderGlobe(T* g, int cx, int cy) {
   const uint16_t globeFill = 0x0081, limb = 0x07F1, meshF = 0x05EC, meshB = 0x0120, eqF = 0x07EC;
   g->fillCircle(cx, cy, (int)GLOBE_R, globeFill);
+  g->setTextWrap(false);   // a magnitude tag near the edge must clip, NOT wrap to the far side
 
   for (int lat = -60; lat <= 60; lat += 30) {                 // parallels (equator brighter)
     uint16_t b = (lat == 0) ? eqF : meshF;
     int px = 0, py = 0; bool pf = false, have = false;
-    for (int lon = -180; lon <= 180; lon += 6) {
+    for (int lon = -180; lon <= 180; lon += 8) {
       int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
       if (have) { if (pf && front) g->drawLine(px, py, sx, sy, b);
                   else if (!pf && !front) g->drawLine(px, py, sx, sy, meshB); }
       px = sx; py = sy; pf = front; have = true;
     }
   }
-  for (int lon = -180; lon < 180; lon += 20) {                 // meridians
+  for (int lon = -180; lon < 180; lon += 24) {                 // meridians
     int px = 0, py = 0; bool pf = false, have = false;
-    for (int lat = -90; lat <= 90; lat += 6) {
+    for (int lat = -90; lat <= 90; lat += 8) {
       int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
       if (have) { if (pf && front) g->drawLine(px, py, sx, sy, meshF);
                   else if (!pf && !front) g->drawLine(px, py, sx, sy, meshB); }
