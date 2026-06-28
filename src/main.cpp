@@ -71,8 +71,9 @@ const int TOUCH_RST      = 18;
 const uint8_t TOUCH_ADDR = 0x38;
 
 // Typography — GFX Free Sans (anti-aliased appearance, much cleaner than bitmap)
-#define FONT_LABEL  &FreeSans9pt7b       // Headers, labels
-#define FONT_DATA   &FreeSansBold9pt7b   // Magnitude numbers — compact bold
+#define FONT_LABEL  &FreeSans9pt7b       // Headers, labels, place names
+#define FONT_DATA   &FreeSansBold9pt7b   // (legacy) compact bold
+#define FONT_MAG    &FreeSansBold12pt7b  // Magnitude hero — a step bigger than the place name
 
 const int SCREEN_WIDTH  = 320;   // Landscape — full 320×240 canvas (setRotation 1)
 const int SCREEN_HEIGHT = 240;
@@ -617,7 +618,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.3", 8, 228, 1);
+    tft.drawString("v3.4", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1169,23 +1170,18 @@ int placeNameHeight(const char* text, int maxW) {
   return placeLayout(a, len, maxW, small, lineH) * lineH;
 }
 
-// Place name fitted into a box (x,y; width maxW, height maxH). Auto-shrinks:
-// FreeSans9pt (15px lines, with Māori macron bars) if it fits in <=3 lines, else the
-// smaller Font 1 (11px lines). Lines are CAPPED to maxH so it can never overrun the
-// meta line pinned below it.
+// Place name fitted into a box (x,y; width maxW, height maxH). ALWAYS one font
+// (FreeSans9pt, with Māori macron bars) — no pixel-font switching, so it reads the
+// same on every region. Wraps to as many 14px lines as fit maxH; a genuinely huge
+// name (rare, after abbreviation) trims the last line with "...".
 void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
-  char a[80]; bool m[80];
-  int len = demacron(text, a, m, sizeof(a));
-  bool small; int tmp;
-  placeLayout(a, len, maxW, small, tmp);            // decides FreeSans9pt vs Font 1
-  int lineH = small ? 11 : 15;
-  int base  = small ? 8  : 11;
-  int hard  = small ? 5  : 3;
-  int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1; if (maxLines > hard) maxLines = hard;
-  if (small) tft.setTextFont(1); else tft.setFreeFont(FONT_LABEL);
+  char a[80]; bool mc[80];
+  int len = demacron(text, a, mc, sizeof(a));
+  tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  int cx = x;                                        // (kept name so the body below is unchanged)
-  int pos = 0, lines = 0; char line[80];
+  const int lineH = 14, base = 11;
+  int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1;
+  int pos = 0, lines = 0; char line[88];
   while (pos < len && lines < maxLines) {
     int rem = min(len - pos, 79); strncpy(line, a + pos, rem); line[rem] = '\0';
     int end;
@@ -1200,22 +1196,32 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
       }
     }
     int pl = end - pos; if (pl <= 0) pl = 1;
+    int lineY = y + lines * lineH + base;
+
+    if (lines == maxLines - 1 && end < len) {         // last line + more text → ellipsis
+      while (pl > 0) {
+        char t2[92]; snprintf(t2, sizeof(t2), "%.*s...", pl, a + pos);
+        if (tft.textWidth(t2) <= maxW) break;
+        pl--;
+      }
+      char outl[92]; snprintf(outl, sizeof(outl), "%.*s...", pl, a + pos);
+      tft.setCursor(x, lineY); tft.print(outl);
+      break;
+    }
+
     strncpy(line, a + pos, pl); line[pl] = '\0';
     while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
-    int lineY = y + lines * lineH + base;
-    tft.setCursor(cx, lineY);
+    tft.setCursor(x, lineY);
     tft.print(line);
 
-    if (!small) {   // Māori macron bars (FreeSans9pt path only)
-      for (int k = 0; k < pl; k++) {
-        if (!m[pos + k]) continue;
-        char pre[80]; strncpy(pre, line, k); pre[k] = '\0';
-        int vx = cx + tft.textWidth(pre);
-        char ch[2] = { line[k], '\0' };
-        int vw = tft.textWidth(ch);
-        bool upper = (line[k] >= 'A' && line[k] <= 'Z');
-        tft.drawFastHLine(vx + 1, lineY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
-      }
+    for (int k = 0; k < pl; k++) {                    // Māori macron bars
+      if (!mc[pos + k]) continue;
+      char pre[80]; strncpy(pre, a + pos, k); pre[k] = '\0';
+      int vx = x + tft.textWidth(pre);
+      char ch[2] = { a[pos + k], '\0' };
+      int vw = tft.textWidth(ch);
+      bool upper = (a[pos + k] >= 'A' && a[pos + k] <= 'Z');
+      tft.drawFastHLine(vx + 1, lineY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
     }
     lines++;
     pos = end; while (pos < len && a[pos] == ' ') pos++;
@@ -1228,27 +1234,28 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
 void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, uint16_t accent) {
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
-  int topY = cellY + 5;
+  int topY = cellY + 4;
 
-  // ── Row 1: ◆ LABEL (left) + M#.# (right, prominent) ──
+  // ── Row 1: ◆ LABEL (left, centred on the magnitude) + M#.# hero (right) ──
+  int rowMid = topY + 8;
   tft.setTextFont(1);
   tft.setTextColor(accent);
-  tft.fillTriangle(xL + 2, topY, xL + 5, topY + 3, xL + 2, topY + 6, accent);
-  tft.fillTriangle(xL + 2, topY, xL - 1, topY + 3, xL + 2, topY + 6, accent);
-  tft.setCursor(xL + 9, topY);
+  tft.fillTriangle(xL + 2, rowMid - 3, xL + 5, rowMid, xL + 2, rowMid + 3, accent);
+  tft.fillTriangle(xL + 2, rowMid - 3, xL - 1, rowMid, xL + 2, rowMid + 3, accent);
+  tft.setCursor(xL + 9, rowMid - 4);
   tft.print(label);
 
   if (!q.isValid) {
     tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(xL, topY + 18); tft.print("NO DATA");
+    tft.setCursor(xL, topY + 24); tft.print("NO DATA");
     return;
   }
 
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
-  tft.setFreeFont(FONT_DATA);
+  tft.setFreeFont(FONT_MAG);
   tft.setTextColor(accent);
   int mw = tft.textWidth(m);
-  tft.setCursor(xL + maxW - mw, topY + 13);          // right-aligned magnitude, same row
+  tft.setCursor(xL + maxW - mw, topY + 16);          // bigger hero magnitude, right-aligned
   tft.print(m);
 
   // ── Meta pinned to the bottom of the cell (always visible) ──
@@ -1264,8 +1271,8 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.setCursor(mx + 5, metaY);
   tft.print(dep);
 
-  // ── Place name fills the gap between row 1 and the meta (auto-fit, never overlaps) ──
-  int placeTop = topY + 18;
+  // ── Place name fills the gap between row 1 and the meta (one font, never overlaps) ──
+  int placeTop = topY + 22;
   drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
 }
 
