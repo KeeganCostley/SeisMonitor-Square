@@ -457,6 +457,11 @@ bool isUsingNZAPI(const char* region) {
 // Equal-aspect projection with cos(lat) longitude correction, fitted to a
 // MAP_BOX_W×MAP_BOX_H box centred on (MAP_CX, MAP_CY). Mirrors NZ_PROJECT()
 // in the design handoff so coastline and markers share one transform.
+// China is far wider than tall, so it letterboxes in the default (tall) box —
+// give it a larger box that fills more of the map panel. Both still fit the panel.
+static int mapBoxW() { return (strcmp(config.region, "China") == 0) ? 194 : MAP_BOX_W; }
+static int mapBoxH() { return (strcmp(config.region, "China") == 0) ? 202 : MAP_BOX_H; }
+
 static void getMapProj(const RegionBounds& db, float& scale,
                        float& offX, float& offY, float& cosLat) {
   float latSpan = db.latMax - db.latMin;
@@ -465,7 +470,7 @@ static void getMapProj(const RegionBounds& db, float& scale,
   cosLat = cosf(cLat * 0.01745329f);
   float effLon = lonSpan * cosLat;
   const float m = 8.0f;                          // inner margin
-  float innerW = MAP_BOX_W - 2 * m, innerH = MAP_BOX_H - 2 * m;
+  float innerW = mapBoxW() - 2 * m, innerH = mapBoxH() - 2 * m;
   scale = min(innerW / effLon, innerH / latSpan);
   offX  = m + (innerW - scale * effLon)  * 0.5f;
   offY  = m + (innerH - scale * latSpan) * 0.5f;
@@ -475,7 +480,7 @@ int mapLatToScreen(float lat) {
   RegionBounds db = getRegionBounds(config.region);
   float scale, offX, offY, cosLat;
   getMapProj(db, scale, offX, offY, cosLat);
-  int gy = MAP_CY - MAP_BOX_H / 2;
+  int gy = MAP_CY - mapBoxH() / 2;
   return gy + (int)(offY + (db.latMax - lat) * scale);
 }
 
@@ -483,7 +488,7 @@ int mapLonToScreen(float lon) {
   RegionBounds db = getRegionBounds(config.region);
   float scale, offX, offY, cosLat;
   getMapProj(db, scale, offX, offY, cosLat);
-  int gx = MAP_CX - MAP_BOX_W / 2;
+  int gx = MAP_CX - mapBoxW() / 2;
   return gx + (int)(offX + (lon - db.lonMin) * scale * cosLat);
 }
 
@@ -618,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.7", 8, 228, 1);
+    tft.drawString("v3.8", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
