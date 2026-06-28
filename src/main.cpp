@@ -722,7 +722,7 @@ void setup() {
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   int f2 = 0;
   while (time(nullptr) < 1600000000 && f2 < 60) {          // animated, ~6s
-    drawLoadingScreen("FETCHING QUAKE DATA", f2);
+    drawLoadingScreen("FETCHING SEISMIC DATA", f2);
     delay(100);
     f2++;
   }
@@ -730,7 +730,7 @@ void setup() {
   syncTimezone();   // NZ default + geo-IP auto-detect of the local offset
   setupWebServer();
 
-  drawLoadingScreen("FETCHING QUAKE DATA", f2);   // hold the loader through the first fetch
+  drawLoadingScreen("FETCHING SEISMIC DATA", f2);   // hold the loader through the first fetch
   checkForEarthquakes();
   drawUI();
   playStartupRumble();
