@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.1", 8, 228, 1);
+    tft.drawString("v4.2", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -935,6 +935,13 @@ void drawGearIcon(int cx, int cy, uint16_t color) {
   tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole
 }
 
+// Native-script region glyphs (16x16, 1bpp): 中国 (China) and 日本 (Japan). GeoNet/USGS
+// send romanised names; the header shows the native script as a small icon for cool factor.
+static const uint8_t GLYPH_ZHONG[] = { 0x01,0x80,0x01,0x80,0x01,0x80,0x01,0x80,0x0F,0xF0,0x09,0x90,0x09,0x90,0x09,0x90,0x09,0x90,0x09,0x90,0x09,0x90,0x0F,0xF0,0x01,0x80,0x01,0x80,0x01,0x80,0x01,0x80 };
+static const uint8_t GLYPH_GUO[]   = { 0x00,0x00,0x7F,0xFE,0x40,0x02,0x40,0x02,0x40,0x02,0x47,0xE2,0x41,0x82,0x41,0x82,0x47,0xE2,0x41,0xA2,0x41,0x82,0x47,0xE2,0x40,0x02,0x40,0x02,0x7F,0xFE,0x00,0x00 };
+static const uint8_t GLYPH_RI[]    = { 0x00,0x00,0x0F,0xF0,0x08,0x10,0x08,0x10,0x08,0x10,0x08,0x10,0x08,0x10,0x0F,0xF0,0x08,0x10,0x08,0x10,0x08,0x10,0x08,0x10,0x08,0x10,0x08,0x10,0x0F,0xF0,0x00,0x00 };
+static const uint8_t GLYPH_HON[]   = { 0x00,0x00,0x01,0x80,0x01,0x80,0x01,0x80,0x01,0x80,0x7F,0xFE,0x03,0xC0,0x05,0xA0,0x09,0x90,0x11,0x88,0x21,0x84,0x4F,0xF2,0x40,0x02,0x40,0x02,0x40,0x02,0x00,0x00 };
+
 // Header — ◉ SEIS · REGION (left), HH:MM · WIFI + cog (right). Soft-HUD, mono.
 void drawHeader() {
   tft.fillRect(0, 0, SCREEN_WIDTH, HEADER_H - 1, currentTheme.background);
@@ -950,8 +957,20 @@ void drawHeader() {
   tft.print("SEISMONITOR ");
   int dx = tft.getCursorX();
   tft.fillCircle(dx + 1, 11, 1, acc);                 // · separator
-  tft.setCursor(dx + 4, 7);
-  tft.print(strcmp(config.region, "NZ") == 0 ? "AOTEAROA NZ" : config.region);   // bicultural name
+  int rx = dx + 4;
+  if (strcmp(config.region, "NZ") == 0) {
+    tft.setCursor(rx, 7); tft.print("AOTEAROA NZ");
+  } else if (strcmp(config.region, "China") == 0) {            // 中国
+    tft.drawBitmap(rx, 3, GLYPH_ZHONG, 16, 16, acc);
+    tft.drawBitmap(rx + 18, 3, GLYPH_GUO, 16, 16, acc);
+    tft.setCursor(rx + 38, 7); tft.print("CHINA");
+  } else if (strcmp(config.region, "Japan") == 0) {            // 日本
+    tft.drawBitmap(rx, 3, GLYPH_RI, 16, 16, acc);
+    tft.drawBitmap(rx + 18, 3, GLYPH_HON, 16, 16, acc);
+    tft.setCursor(rx + 38, 7); tft.print("JAPAN");
+  } else {
+    tft.setCursor(rx, 7); tft.print(config.region);            // California / Global
+  }
 
   // ── Right: HH:MM · WIFI + cog (secondary) ──
   uint16_t sec = currentTheme.textSecondary;
