@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.9", 8, 228, 1);
+    tft.drawString("v4.0", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1119,6 +1119,42 @@ int demacron(const char* in, char* out, bool* macronAt, int maxOut) {
   return o;
 }
 
+// NZ place names GeoNet sends WITHOUT macrons → their correct macronised form.
+// GeoNet's API drops the macrons; the device puts them back. Extend freely — and
+// worth having a GeoNet/Te Reo contact verify the spellings. (Only confident entries
+// included; an unsure name should be omitted rather than wrongly macronised.)
+struct MacronName { const char* ascii; const char* macron; };
+static const MacronName NZ_MACRONS[] = {
+  {"Taupo","Taupō"},{"Turangi","Tūrangi"},{"Whakatane","Whakatāne"},{"Opotiki","Ōpōtiki"},
+  {"Otaki","Ōtaki"},{"Whangarei","Whangārei"},{"Kaitaia","Kaitāia"},{"Otorohanga","Ōtorohanga"},
+  {"Kuiti","Kūiti"},{"Pokeno","Pōkeno"},{"Paekakariki","Paekākāriki"},{"Kawhia","Kāwhia"},
+  {"Piopio","Pīopio"},{"Mokau","Mōkau"},{"Ohura","Ōhura"},{"Maketu","Maketū"},
+  {"Matata","Matatā"},{"Taneatua","Tāneatua"},{"Ngongotaha","Ngongotahā"},{"Putaruru","Pūtāruru"},
+  {"Tirau","Tīrau"},{"Waiouru","Waiōuru"},{"Wairakei","Wairākei"},{"Okato","Ōkato"},
+  {"Papamoa","Pāpāmoa"},{"Omokoroa","Ōmokoroa"},{"Waihi","Waihī"},{"Whangamata","Whangamatā"},
+  {"Ohau","Ōhau"},{"Tutira","Tūtira"},{"Ohope","Ōhope"},{"Patea","Pātea"},
+  {"Porangahau","Pōrangahau"},{"Eketahuna","Eketāhuna"},{"Ruatoria","Ruatōria"},{"Torere","Tōrere"},
+  {"Ngaruawahia","Ngāruawāhia"},{"Maungaturoto","Maungatūroto"},{"Hawera","Hāwera"},{"Owhango","Ōwhango"},
+  {"Pauatahanui","Pāuatahanui"},{"Ohaupo","Ōhaupō"},{"Titahi","Tītahi"},{"Kaikoura","Kaikōura"},
+  {"Wanaka","Wānaka"},{"Takaka","Tākaka"},
+};
+static bool isLetterC(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+
+// Restore macrons on whole-word matches (so "Otaki" can't match inside "Otakiri", etc.).
+static void restoreMacrons(String& s) {
+  for (unsigned i = 0; i < sizeof(NZ_MACRONS) / sizeof(NZ_MACRONS[0]); i++) {
+    const char* f = NZ_MACRONS[i].ascii; int fl = strlen(f), idx = 0;
+    while ((idx = s.indexOf(f, idx)) >= 0) {
+      char b = (idx == 0) ? ' ' : s.charAt(idx - 1);
+      int ai = idx + fl; char a = (ai >= (int)s.length()) ? ' ' : s.charAt(ai);
+      if (!isLetterC(b) && !isLetterC(a)) {
+        s = s.substring(0, idx) + NZ_MACRONS[i].macron + s.substring(ai);
+        idx += strlen(NZ_MACRONS[i].macron);
+      } else idx += fl;
+    }
+  }
+}
+
 // Abbreviate GeoNet/USGS boilerplate so long names fit: "<n> km <dir> of" -> "<n>km <DIR> of".
 void abbreviatePlace(const char* in, char* out, int maxOut) {
   if (!in) { out[0] = '\0'; return; }
@@ -1134,6 +1170,8 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
     int ofIdx = s.indexOf(" of ");
     if (ofIdx >= 0 && ofIdx < 15) s = s.substring(ofIdx + 4);
   }
+  // GeoNet (NZ) drops macrons — put them back.
+  if (strcmp(config.region, "NZ") == 0) restoreMacrons(s);
   strncpy(out, s.c_str(), maxOut - 1); out[maxOut - 1] = '\0';
 }
 
