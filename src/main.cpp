@@ -618,7 +618,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.6", 8, 228, 1);
+    tft.drawString("v3.7", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1119,10 +1119,10 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
   if (!in) { out[0] = '\0'; return; }
   String s = in;
   s.replace(" km ", "km ");
+  // Compound directions abbreviate (spelled out they're too long); single
+  // directions stay spelled out (north/south/east/west) per preference.
   s.replace(" north-west of ", " NW of "); s.replace(" north-east of ", " NE of ");
   s.replace(" south-west of ", " SW of "); s.replace(" south-east of ", " SE of ");
-  s.replace(" north of ", " N of ");       s.replace(" south of ", " S of ");
-  s.replace(" east of ", " E of ");        s.replace(" west of ", " W of ");
   strncpy(out, s.c_str(), maxOut - 1); out[maxOut - 1] = '\0';
 }
 
@@ -1170,6 +1170,16 @@ int placeNameHeight(const char* text, int maxW) {
   return placeLayout(a, len, maxW, small, lineH) * lineH;
 }
 
+// True if the word right after space `sp` is a 2-letter connector ("of"/"de") — keep
+// it glued to the preceding word so it never strands on its own line.
+static bool connectorAfter(const char* a, int sp, int len) {
+  int j = sp + 1;
+  if (j + 1 >= len) return false;
+  bool boundary = (j + 2 >= len) || (a[j + 2] == ' ');
+  if (!boundary) return false;
+  return (a[j] == 'o' && a[j + 1] == 'f') || (a[j] == 'd' && a[j + 1] == 'e');
+}
+
 // Place name fitted into a box (x,y; width maxW, height maxH). ALWAYS one font
 // (FreeSans9pt, with Māori macron bars) — no pixel-font switching, so it reads the
 // same on every region. Wraps to as many 14px lines as fit maxH; a genuinely huge
@@ -1189,7 +1199,7 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
     else {
       end = pos; int lastSpace = -1;
       for (int i = pos; i < len && i - pos < 79; i++) {
-        if (a[i] == ' ') lastSpace = i;
+        if (a[i] == ' ' && !connectorAfter(a, i, len)) lastSpace = i;   // don't break before "of"/"de"
         int seg = i + 1 - pos; strncpy(line, a + pos, seg); line[seg] = '\0';
         if (tft.textWidth(line) > maxW) { end = (lastSpace > pos) ? lastSpace : i; break; }
         end = i + 1;
@@ -1354,6 +1364,14 @@ void drawMap() {
       drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, latestQuake.magnitude);
     if (highestRegionalQuake.isValid)
       drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, highestRegionalQuake.magnitude);
+
+    // Data-source credit — bottom-right of the map (GeoNet for NZ, USGS otherwise)
+    const char* src = (strcmp(config.region, "NZ") == 0) ? "POWERED BY GEONET" : "POWERED BY USGS";
+    tft.setTextFont(1);
+    tft.setTextColor(currentTheme.textSecondary);
+    int sw = tft.textWidth(src);
+    tft.setCursor(MAP_X + MAP_WIDTH - sw - 6, MAP_Y + MAP_HEIGHT - 11);
+    tft.print(src);
   }
 
   tft.drawRoundRect(MAP_X, MAP_Y, MAP_WIDTH, MAP_HEIGHT, 3, PANEL_EDGE);   // panel frame on top
