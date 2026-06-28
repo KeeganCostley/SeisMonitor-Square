@@ -266,7 +266,7 @@ bool          globeSprReady    = false;
 bool          globeSprTried    = false;
 float         globeRot         = 0.6f;  // globe yaw (radians)
 unsigned long lastGlobeFrame   = 0;
-const float   GLOBE_R          = 92.0f;
+const float   GLOBE_R          = 74.0f;   // inset from the panel edges (was 92, too big)
 
 String lastQuakeID = "";
 
@@ -1169,17 +1169,22 @@ int placeNameHeight(const char* text, int maxW) {
   return placeLayout(a, len, maxW, small, lineH) * lineH;
 }
 
-// Place name — auto-fits: FreeSans9pt (3 lines, with Māori macron bars) or the
-// smaller built-in Font 1 (up to 5 lines) for long names. Left edge at cx. Returns height.
-int drawPlaceName(const char* text, int cx, int y, int maxW) {
+// Place name fitted into a box (x,y; width maxW, height maxH). Auto-shrinks:
+// FreeSans9pt (15px lines, with Māori macron bars) if it fits in <=3 lines, else the
+// smaller Font 1 (11px lines). Lines are CAPPED to maxH so it can never overrun the
+// meta line pinned below it.
+void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   char a[80]; bool m[80];
   int len = demacron(text, a, m, sizeof(a));
-  bool small; int lineH;
-  placeLayout(a, len, maxW, small, lineH);          // sets font + small + lineH
-  int maxLines = small ? 5 : 3;
+  bool small; int tmp;
+  placeLayout(a, len, maxW, small, tmp);            // decides FreeSans9pt vs Font 1
+  int lineH = small ? 11 : 15;
+  int base  = small ? 8  : 11;
+  int hard  = small ? 5  : 3;
+  int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1; if (maxLines > hard) maxLines = hard;
   if (small) tft.setTextFont(1); else tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  int base = small ? 8 : 10;
+  int cx = x;                                        // (kept name so the body below is unchanged)
   int pos = 0, lines = 0; char line[80];
   while (pos < len && lines < maxLines) {
     int rem = min(len - pos, 79); strncpy(line, a + pos, rem); line[rem] = '\0';
@@ -1216,55 +1221,52 @@ int drawPlaceName(const char* text, int cx, int y, int maxW) {
     pos = end; while (pos < len && a[pos] == ' ') pos++;
     if (pos >= len) break;
   }
-  return lines * lineH;
 }
 
-// One left-aligned data cell: ◆ LABEL / M#.# / place / meta, vertically centred.
+// One data cell: ◆ LABEL + magnitude on row 1; place name fills the middle (auto-fit);
+// meta (time · depth) pinned to the bottom so a long name can never bury it.
 void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, uint16_t accent) {
   int xL = DATA_X + 7;
   int maxW = DATA_WIDTH - 12;
-  int placeH = q.isValid ? placeNameHeight(q.location, maxW) : 0;
-  int contentH = 9 + 16 + (q.isValid ? (placeH + 8) : 12);   // place block auto-sizes to its font
-  int y = cellY + (cellH - contentH) / 2;
-  if (y < cellY + 2) y = cellY + 2;
+  int topY = cellY + 5;
 
-  // ◆ LABEL
+  // ── Row 1: ◆ LABEL (left) + M#.# (right, prominent) ──
   tft.setTextFont(1);
   tft.setTextColor(accent);
-  tft.fillTriangle(xL + 2, y, xL + 5, y + 3, xL + 2, y + 6, accent);
-  tft.fillTriangle(xL + 2, y, xL - 1, y + 3, xL + 2, y + 6, accent);
-  tft.setCursor(xL + 9, y);
+  tft.fillTriangle(xL + 2, topY, xL + 5, topY + 3, xL + 2, topY + 6, accent);
+  tft.fillTriangle(xL + 2, topY, xL - 1, topY + 3, xL + 2, topY + 6, accent);
+  tft.setCursor(xL + 9, topY);
   tft.print(label);
-  y += 9;
 
   if (!q.isValid) {
     tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(xL, y + 2); tft.print("NO DATA");
+    tft.setCursor(xL, topY + 18); tft.print("NO DATA");
     return;
   }
 
-  // Magnitude (FreeSansBold9pt)
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
   tft.setFreeFont(FONT_DATA);
   tft.setTextColor(accent);
-  tft.setCursor(xL, y + 14);
+  int mw = tft.textWidth(m);
+  tft.setCursor(xL + maxW - mw, topY + 13);          // right-aligned magnitude, same row
   tft.print(m);
-  y += 16;
 
-  // Place name
-  y += drawPlaceName(q.location, xL, y, maxW);
-
-  // Meta: "#M AGO · #KM"
+  // ── Meta pinned to the bottom of the cell (always visible) ──
+  int metaY = cellY + cellH - 9;
   String ago = getTimeAgo(q.timestamp); ago.toUpperCase();
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(xL, y);
+  tft.setCursor(xL, metaY);
   tft.print(ago); tft.print(" AGO");
   int mx = tft.getCursorX();
-  tft.fillCircle(mx + 3, y + 3, 1, currentTheme.textSecondary);
+  tft.fillCircle(mx + 3, metaY + 3, 1, currentTheme.textSecondary);
   char dep[10]; snprintf(dep, sizeof(dep), " %dKM", (int)q.depth);
-  tft.setCursor(mx + 5, y);
+  tft.setCursor(mx + 5, metaY);
   tft.print(dep);
+
+  // ── Place name fills the gap between row 1 and the meta (auto-fit, never overlaps) ──
+  int placeTop = topY + 18;
+  drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
 }
 
 void drawDataPanel() {
@@ -1273,7 +1275,7 @@ void drawDataPanel() {
   drawDataCell(DATA_Y, cellH, latestQuake, "LATEST", currentTheme.dataLatest);
   int divY = DATA_Y + cellH;
   tft.drawFastHLine(DATA_X + 8, divY, DATA_WIDTH - 16, PANEL_EDGE_DIM);
-  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H HIGH", currentTheme.dataHighest);
+  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H MAX", currentTheme.dataHighest);
   tft.drawRoundRect(DATA_X, DATA_Y, DATA_WIDTH, DATA_HEIGHT, 3, PANEL_EDGE);
 }
 
