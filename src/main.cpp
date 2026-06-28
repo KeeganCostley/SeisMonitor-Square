@@ -617,7 +617,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.2-bootfix", 8, 228, 1);
+    tft.drawString("v3.3", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -754,10 +754,14 @@ void loop() {
     return;
   }
   
-  unsigned long now = millis();
-  
   handleButton();
-  
+
+  // Read the clock AFTER handleButton: it may have just opened the picker (or shown an
+  // alert) and set pickerStartTime/alertStartTime to a millis() LATER than a value
+  // captured before the call. "now - start" would then underflow (unsigned) to ~4e9 and
+  // trip the 30s auto-close on the SAME iteration the picker opens — the entire "flash".
+  unsigned long now = millis();
+
   if (showingAlert) {
     if (now - alertStartTime > ALERT_DURATION) {
       showingAlert = false;
@@ -2719,21 +2723,6 @@ void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy) {
   sy = (int16_t)constrain((int)sy, 0, SCREEN_HEIGHT - 1);
 }
 
-// Diagnostic: if the picker closes suspiciously soon (<4s) after opening — the
-// recurring "flash" — show WHY + the touch coords for ~1.6s so we can finally see
-// what's firing. A normal close (after browsing) is >4s and shows nothing.
-void pickerCloseDiag(const char* why, int sx, int sy) {
-  if (millis() - pickerStartTime >= 4000) return;
-  tft.fillScreen(currentTheme.background);
-  tft.setTextColor(currentTheme.textAccent);
-  char buf[40];
-  snprintf(buf, sizeof(buf), "CLOSED: %s", why);
-  tft.drawCentreString(buf, 160, 95, 2);
-  snprintf(buf, sizeof(buf), "(%d,%d)", sx, sy);
-  tft.drawCentreString(buf, 160, 122, 2);
-  delay(1600);
-}
-
 void handleButton() {
   if (showingAlert) return;
 
@@ -2770,8 +2759,8 @@ void handleButton() {
         // releasedSinceOpen false, so it can never select a region or close.
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
-          if (picked >= 0)             { pickerCloseDiag("REGION", sx, sy); selectRegion(picked); }
-          else if (sx < 90 && sy < 30) { pickerCloseDiag("BACK", sx, sy); showingRegionPicker = false; drawUI(); }
+          if (picked >= 0)             selectRegion(picked);                       // chose a region
+          else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
           // Gear corner (top-right) deliberately does NOT close.
         }
       } else if (sx > 280 && sy < 30) {
