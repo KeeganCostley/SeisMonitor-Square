@@ -618,7 +618,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v3.4", 8, 228, 1);
+    tft.drawString("v3.5", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1282,7 +1282,7 @@ void drawDataPanel() {
   drawDataCell(DATA_Y, cellH, latestQuake, "LATEST", currentTheme.dataLatest);
   int divY = DATA_Y + cellH;
   tft.drawFastHLine(DATA_X + 8, divY, DATA_WIDTH - 16, PANEL_EDGE_DIM);
-  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H MAX", currentTheme.dataHighest);
+  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H", currentTheme.dataHighest);
   tft.drawRoundRect(DATA_X, DATA_Y, DATA_WIDTH, DATA_HEIGHT, 3, PANEL_EDGE);
 }
 
@@ -2297,31 +2297,35 @@ void checkForEarthquakes() {
   
   if (totalFeatures == 0) return;
   
-  float highestMag = 0;
-  int highestIdx = -1;
+  float highestMag = 0;    int highestIdx = -1;     // strongest in the whole feed (fallback)
+  float highestMag24 = 0;  int highestIdx24 = -1;   // strongest within the last 24 h (preferred)
   int processedCount = 0;
-  
+  time_t nowEpoch = time(nullptr);
+
   recentQuakeCount = 0;
-  
+
   for (int i = 0; i < totalFeatures && processedCount < 20; i++) {
     JsonObject quake = features[i];
-    
+
     float mag, lat, lon, depth;
-    
+    unsigned long qts;
+
     if (usingNZ) {
       lat = quake["geometry"]["coordinates"][1];
       lon = quake["geometry"]["coordinates"][0];
       mag = quake["properties"]["magnitude"];
       depth = quake["properties"]["depth"];
+      qts = parseISOToEpoch(quake["properties"]["time"].as<const char*>());
     } else {
       lon = quake["geometry"]["coordinates"][0];
       lat = quake["geometry"]["coordinates"][1];
       mag = quake["properties"]["mag"];
       depth = quake["geometry"]["coordinates"][2];
+      qts = (unsigned long)(quake["properties"]["time"].as<double>() / 1000.0);
     }
-    
+
     if (!isInRegion(lat, lon, config.region)) continue;
-    
+
     if (recentQuakeCount < 20) {
       recentQuakes[recentQuakeCount].lat = lat;
       recentQuakes[recentQuakeCount].lon = lon;
@@ -2329,14 +2333,17 @@ void checkForEarthquakes() {
       recentQuakes[recentQuakeCount].valid = true;
       recentQuakeCount++;
     }
-    
+
     processedCount++;
-    
-    if (mag > highestMag) {
-      highestMag = mag;
-      highestIdx = i;
-    }
+
+    if (mag > highestMag) { highestMag = mag; highestIdx = i; }
+    bool within24 = (nowEpoch > 1600000000) && (qts > 0) &&
+                    ((unsigned long)nowEpoch - qts < 86400UL);
+    if (within24 && mag > highestMag24) { highestMag24 = mag; highestIdx24 = i; }
   }
+  // Prefer the TRUE 24-hour max so the "24H" label is honest; fall back to the
+  // feed max only when nothing landed in the last 24 h.
+  if (highestIdx24 >= 0) { highestIdx = highestIdx24; highestMag = highestMag24; }
   
   Serial.println("In region: " + String(processedCount));
   
