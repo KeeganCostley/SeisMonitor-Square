@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.4", 8, 228, 1);
+    tft.drawString("v4.5", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1207,10 +1207,13 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
   // long "City, Country" names truncate — so drop the leading "<dist>km <dir> of ".
   if (strcmp(config.region, "Global") == 0) {
     int ofIdx = s.indexOf(" of ");
-    if (ofIdx >= 0 && ofIdx < 15) s = s.substring(ofIdx + 4);
+    if (ofIdx >= 0 && ofIdx < 15) s = s.substring(ofIdx + 4);   // keep "Place, Country"
+  } else if (strcmp(config.region, "NZ") == 0) {
+    restoreMacrons(s);                                          // GeoNet drops macrons — restore them
+  } else {
+    int ci = s.lastIndexOf(',');                               // Japan/California/China: the trailing
+    if (ci > 0) s = s.substring(0, ci);                        // ", Region" is redundant + truncates — drop it
   }
-  // GeoNet (NZ) drops macrons — put them back.
-  if (strcmp(config.region, "NZ") == 0) restoreMacrons(s);
   strncpy(out, s.c_str(), maxOut - 1); out[maxOut - 1] = '\0';
 }
 
@@ -2786,12 +2789,12 @@ void drawRegionPicker() {
 
 // Returns picker row 0..4 under a screen point, or -1 if none.
 int regionAtPoint(int16_t sx, int16_t sy) {
-  if (sx < PICK_X || sx > PICK_X + PICK_W) return -1;
-  for (int i = 0; i < REGION_COUNT; i++) {
-    int y = PICK_Y0 + i * PICK_PITCH;
-    if (sy >= y && sy <= y + PICK_H) return i;
-  }
-  return -1;
+  // Forgiving hit zones: the whole left column (up to the divider), and each row claims
+  // its full pitch so taps in the gaps still land on the nearest region.
+  if (sx < 2 || sx > 158) return -1;
+  if (sy < PICK_Y0 - 2) return -1;
+  int i = (sy - (PICK_Y0 - 2)) / PICK_PITCH;
+  return (i >= 0 && i < REGION_COUNT) ? i : -1;
 }
 
 // Apply a chosen region: persist it, clear stale data, reload, return to main UI.
