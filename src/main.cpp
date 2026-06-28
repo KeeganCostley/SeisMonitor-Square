@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.3", 8, 228, 1);
+    tft.drawString("v4.4", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -791,19 +791,26 @@ void loop() {
     lastSeismoUpdate = now;
   }
 
-  // Live epicenter pulse — a ~2s burst of radiating rings on the LATEST quake
-  // every 5 min, to give the display a little life (first burst 15s after data).
+  // Live epicenter pulse — radiating rings on the LATEST quake so the screen feels alive
+  // and you're likely to catch it. Lively for a fresh quake (every ~90s in the first hour),
+  // calmer after (every ~3 min). First burst ~8s after data.
   {
     static unsigned long nextPulse = 0, pulseStart = 0;
     static bool pulseActive = false;
     bool canPulse = latestQuake.isValid && strcmp(config.region, "Global") != 0;   // globe self-animates
     if (canPulse) {
-      if (nextPulse == 0) nextPulse = now + 15000UL;
-      if (!pulseActive && now >= nextPulse) { pulseActive = true; pulseStart = now; nextPulse = now + 300000UL; }
+      if (nextPulse == 0) nextPulse = now + 8000UL;
+      if (!pulseActive && now >= nextPulse) {
+        pulseActive = true; pulseStart = now;
+        time_t te = time(nullptr);
+        unsigned long age = (te > 1600000000 && latestQuake.timestamp > 0 && (unsigned long)te > latestQuake.timestamp)
+                            ? ((unsigned long)te - latestQuake.timestamp) : 999999UL;
+        nextPulse = now + (age < 3600UL ? 90000UL : 180000UL);   // 90s in the first hour, else 3 min
+      }
     }
     if (pulseActive) {
-      if (now - pulseStart < 2000UL) {
-        if (now - lastMapPing > 200) { animateMapPing(); lastMapPing = now; }
+      if (now - pulseStart < 3500UL) {                           // ~3.5s burst — long enough to notice
+        if (now - lastMapPing > 180) { animateMapPing(); lastMapPing = now; }
       } else {
         pulseActive = false;
         updateMapEarthquakeMarkers();   // restore the clean marker after the burst
