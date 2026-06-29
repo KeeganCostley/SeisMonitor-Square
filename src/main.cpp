@@ -627,7 +627,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.2", 8, 228, 1);
+    tft.drawString("v5.3", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1207,6 +1207,15 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
   // directions stay spelled out (north/south/east/west) per preference.
   s.replace(" north-west of ", " NW of "); s.replace(" north-east of ", " NE of ");
   s.replace(" south-west of ", " SW of "); s.replace(" south-east of ", " SE of ");
+  // USGS uses compass codes ("12km SSW of ..."). Collapse the wordy 3-letter intercardinals to the
+  // nearest diagonal (SSW->SW), then spell out lone cardinals (N->north). Order matters: 3-letter
+  // first, then 1-letter. The 2-letter diagonals (NE/NW/SE/SW) pass through unchanged.
+  s.replace(" NNE of ", " NE of "); s.replace(" ENE of ", " NE of ");
+  s.replace(" ESE of ", " SE of "); s.replace(" SSE of ", " SE of ");
+  s.replace(" SSW of ", " SW of "); s.replace(" WSW of ", " SW of ");
+  s.replace(" WNW of ", " NW of "); s.replace(" NNW of ", " NW of ");
+  s.replace(" N of ", " north of "); s.replace(" S of ", " south of ");
+  s.replace(" E of ", " east of ");  s.replace(" W of ", " west of ");
   // Global view: the country matters more than the distance from a small town, and
   // long "City, Country" names truncate — so drop the leading "<dist>km <dir> of ".
   if (strcmp(config.region, "Global") == 0) {
