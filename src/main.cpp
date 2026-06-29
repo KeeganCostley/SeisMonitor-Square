@@ -623,7 +623,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.5", 8, 228, 1);
+    tft.drawString("v4.6", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1383,7 +1383,7 @@ void drawDataPanel() {
   drawDataCell(DATA_Y, cellH, latestQuake, "LATEST", currentTheme.dataLatest);
   int divY = DATA_Y + cellH;
   tft.drawFastHLine(DATA_X + 8, divY, DATA_WIDTH - 16, PANEL_EDGE_DIM);
-  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H MAX", currentTheme.dataHighest);
+  drawDataCell(divY + 1, DATA_HEIGHT - cellH - 1, highestRegionalQuake, "24H HIGH", currentTheme.dataHighest);
   tft.drawRoundRect(DATA_X, DATA_Y, DATA_WIDTH, DATA_HEIGHT, 3, PANEL_EDGE);
 }
 
@@ -1453,7 +1453,13 @@ void drawMap() {
     }
     if (latestQuake.isValid)
       drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, latestQuake.magnitude);
-    if (highestRegionalQuake.isValid)
+    // Skip the 24h-high marker when it's the same quake/spot as the latest — otherwise the
+    // two rings + magnitude tags overlap and the number is unreadable.
+    bool sameSpot = latestQuake.isValid && highestRegionalQuake.isValid &&
+                    (latestQuake.timestamp == highestRegionalQuake.timestamp ||
+                     (fabsf(latestQuake.latitude  - highestRegionalQuake.latitude)  < 0.3f &&
+                      fabsf(latestQuake.longitude - highestRegionalQuake.longitude) < 0.3f));
+    if (highestRegionalQuake.isValid && !sameSpot)
       drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, highestRegionalQuake.magnitude);
 
     // Data-source credit — bottom-right of the map (GeoNet for NZ, USGS otherwise)
@@ -2016,9 +2022,8 @@ void drawJapanMap() {
     {27.85, 128.25}, {26.62, 128.00}, {26.22, 127.68}, {25.80, 125.28},
     {24.48, 124.08}, {24.00, 123.60}, {23.00, 122.50},
   };
-  for (int i = 0; i < 10; i++)
-    tft.drawLine(mapLonToScreen(ryukyu[i][1]),   mapLatToScreen(ryukyu[i][0]),
-                 mapLonToScreen(ryukyu[i+1][1]), mapLatToScreen(ryukyu[i+1][0]), currentTheme.mapOutline);
+  // (Ryukyu chain is drawn dim + clipped below with the trenches — it was a bright unclipped
+  //  line stretching off toward Taiwan, which looked like a tail. Now it's subtle texture.)
 
   // Japan Trench — subduction zone off the Pacific coast of Honshu (dotted cyan)
   const float japanTrench[][2] = {
@@ -2043,8 +2048,14 @@ void drawJapanMap() {
       }
     }
   };
-  drawDotted(japanTrench,  6, GEO_DIM);   // Muted teal
-  drawDotted(nankaiTrough, 6, GEO_DIM);   // Muted teal
+  // More ocean trenches for subtle texture (all clipped to the panel by drawDotted)
+  const float kuril[][2]    = {{45.20,146.00},{43.50,145.00},{42.00,144.00},{40.50,143.50}};   // Kuril Trench (NE)
+  const float izuBonin[][2] = {{33.00,141.20},{31.50,141.80},{30.20,142.30}};                  // Izu-Ogasawara (S)
+  drawDotted(japanTrench,  6, GEO_DIM);
+  drawDotted(nankaiTrough, 6, GEO_DIM);
+  drawDotted(kuril,        4, GEO_DIM);
+  drawDotted(izuBonin,     3, GEO_DIM);
+  drawDotted(ryukyu,      11, GEO_DIM);   // island chain — subtle dotted, clipped (no bright tail)
 
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(139.69), mapLatToScreen(35.68), 2, currentTheme.mapCity); // Tokyo
