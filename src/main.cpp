@@ -82,7 +82,7 @@ const int SCREEN_HEIGHT = 240;
 // TIMING CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const unsigned long API_POLL_INTERVAL = 30000;      // 30 seconds
+const unsigned long API_POLL_INTERVAL = 90000;      // 90s — the fetch is blocking, so a longer gap means the globe stalls far less often
 const unsigned long SEISMO_UPDATE_INTERVAL = 50;    // 50ms — smoother / higher-res scroll
 const unsigned long DISPLAY_CYCLE_INTERVAL = 60000; // 60 seconds
 const unsigned long REST_MODE_TIMEOUT = 45000;      // 45 seconds
@@ -133,7 +133,8 @@ const int MAP_BOX_H = 190;
 // Soft-green structural panel borders (June-20 handoff)
 const uint16_t PANEL_EDGE     = 0x2246;          // #234a36
 const uint16_t PANEL_EDGE_DIM = 0x1183;          // #16301f
-const uint16_t GEO_DIM        = 0x2B69;          // muted green — visible-but-subtle fault/trench texture
+const uint16_t GEO_DIM        = 0x2227;          // faint green — barely-there OCEAN-TRENCH texture (Japan/Cascadia; dimmed: was too "stringy")
+const uint16_t GEO_FAULT      = 0x2B69;          // muted green — visible-but-subtle LAND-FAULT lines (NZ/China/California)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REGIONAL BOUNDARIES
@@ -623,7 +624,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.7-spi40", 8, 228, 1);
+    tft.drawString("v4.8", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1341,9 +1342,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   int rowMid = topY + 8;
   tft.setTextFont(1);
   tft.setTextColor(accent);
-  tft.fillTriangle(xL + 2, rowMid - 3, xL + 5, rowMid, xL + 2, rowMid + 3, accent);
-  tft.fillTriangle(xL + 2, rowMid - 3, xL - 1, rowMid, xL + 2, rowMid + 3, accent);
-  tft.setCursor(xL + 9, rowMid - 4);
+  tft.setCursor(xL, rowMid - 4);                      // diamond removed — frees room so "24H HIGH" + M#.# never collide
   tft.print(label);
 
   if (!q.isValid) {
@@ -1721,7 +1720,7 @@ void drawMapGraticule(uint16_t color) {
 // REGIONAL MAPS - NEW ZEALAND
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Subtle geological feature (fault / trench) as a faint dotted polyline (GEO_DIM).
+// Subtle geological feature (land fault) as a dotted polyline (GEO_FAULT — visible-but-subtle).
 void drawGeoDotted(const float pts[][2], int n) {
   for (int i = 0; i < n - 1; i++) {
     int x0 = mapLonToScreen(pts[i][1]),   y0 = mapLatToScreen(pts[i][0]);
@@ -1731,7 +1730,7 @@ void drawGeoDotted(const float pts[][2], int n) {
       int px = x0 + s * (x1 - x0) / max(steps, 1);
       int py = y0 + s * (y1 - y0) / max(steps, 1);
       if (px > MAP_X && px < MAP_X + MAP_WIDTH && py > MAP_Y && py < MAP_Y + MAP_HEIGHT)
-        tft.drawPixel(px, py, GEO_DIM);
+        tft.drawPixel(px, py, GEO_FAULT);
     }
   }
 }
@@ -2201,6 +2200,19 @@ void drawCaliforniaMap() {
     tft.drawLine(mapLonToScreen(california[i][1]),   mapLatToScreen(california[i][0]),
                  mapLonToScreen(california[i+1][1]), mapLatToScreen(california[i+1][0]), currentTheme.mapOutline);
 
+  // Salton Sea — dark inland lake (Imperial Valley); a recognisable, seismically busy feature
+  {
+    int ssx = mapLonToScreen(-115.85), ssy = mapLatToScreen(33.30);
+    tft.fillEllipse(ssx, ssy, 3, 4, currentTheme.background);
+    tft.drawEllipse(ssx, ssy, 3, 4, GEO_DIM);
+  }
+
+  // Channel Islands — tiny land specks off the Southern California coast
+  tft.fillCircle(mapLonToScreen(-119.75), mapLatToScreen(34.02), 2, currentTheme.mapOutline); // Santa Cruz
+  tft.fillCircle(mapLonToScreen(-120.10), mapLatToScreen(33.97), 1, currentTheme.mapOutline); // Santa Rosa
+  tft.fillCircle(mapLonToScreen(-118.42), mapLatToScreen(33.39), 1, currentTheme.mapOutline); // Santa Catalina
+  tft.fillCircle(mapLonToScreen(-118.55), mapLatToScreen(32.90), 1, currentTheme.mapOutline); // San Clemente
+
   // Cascadia Subduction Zone — offshore, NW California to Oregon border (dotted cyan)
   const float cascadia[][2] = {
     {42.00, -125.20}, {41.20, -125.00}, {40.40, -124.75},
@@ -2217,8 +2229,9 @@ void drawCaliforniaMap() {
     }
   }
 
-  // San Andreas Fault
-  const float fault[][2] = {
+  // ── California's fault network — dotted, matching the other regions' geo texture ──
+  // San Andreas (the big one) — Mendocino coast all the way south to the Salton Sea
+  const float sanAndreas[][2] = {
     {40.30, -124.30}, {39.80, -123.70}, {39.20, -123.30},
     {38.50, -122.95}, {38.00, -122.55}, {37.70, -122.25},
     {37.40, -122.10}, {37.00, -121.85},
@@ -2228,12 +2241,28 @@ void drawCaliforniaMap() {
     {33.60, -117.70}, {33.40, -117.35}, {33.20, -116.95},
     {33.00, -116.50}, {32.80, -116.10}, {32.60, -115.70},
   };
+  drawGeoDotted(sanAndreas, sizeof(sanAndreas) / sizeof(sanAndreas[0]));
 
-  int faultPts = sizeof(fault) / sizeof(fault[0]);
-  for (int i = 0; i < faultPts - 1; i++) {
-    tft.drawLine(mapLonToScreen(fault[i][1]), mapLatToScreen(fault[i][0]),
-                 mapLonToScreen(fault[i+1][1]), mapLatToScreen(fault[i+1][0]), GEO_DIM);   // San Andreas (subtle)
-  }
+  // Hayward Fault — East Bay (San Pablo Bay down through Oakland to Fremont)
+  const float hayward[][2] = {
+    {38.05, -122.30}, {37.90, -122.20}, {37.75, -122.10},
+    {37.60, -121.99}, {37.45, -121.88}, {37.30, -121.78},
+  };
+  drawGeoDotted(hayward, sizeof(hayward) / sizeof(hayward[0]));
+
+  // San Jacinto Fault — San Bernardino SE toward the Imperial Valley (very active)
+  const float sanJacinto[][2] = {
+    {34.10, -117.46}, {33.90, -117.18}, {33.65, -116.85},
+    {33.40, -116.50}, {33.10, -116.05}, {32.80, -115.60},
+  };
+  drawGeoDotted(sanJacinto, sizeof(sanJacinto) / sizeof(sanJacinto[0]));
+
+  // Garlock Fault — the E-W scarp along the north edge of the Mojave
+  const float garlock[][2] = {
+    {34.81, -118.90}, {35.00, -118.30}, {35.20, -117.75},
+    {35.38, -117.25}, {35.48, -116.70},
+  };
+  drawGeoDotted(garlock, sizeof(garlock) / sizeof(garlock[0]));
 
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(-122.42), mapLatToScreen(37.77), 2, currentTheme.mapCity); // San Francisco
