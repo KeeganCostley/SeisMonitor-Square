@@ -627,7 +627,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.3", 8, 228, 1);
+    tft.drawString("v5.4", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1222,6 +1222,9 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
     int ofIdx = s.indexOf(" of ");
     if (ofIdx >= 0 && ofIdx < 15) s = s.substring(ofIdx + 4);   // keep "Place, Country"
   } else if (strcmp(config.region, "NZ") == 0) {
+    // GeoNet's "Within N km of <place>" (very-close quakes) is verbose and overflows the data cell;
+    // the map marker already shows the exact spot, so collapse it to just "<place>".
+    if (s.startsWith("Within ")) { int o = s.indexOf(" of "); if (o >= 0) s = s.substring(o + 4); }
     restoreMacrons(s);                                          // GeoNet drops macrons — restore them
   } else {
     int ci = s.lastIndexOf(',');                               // Japan/California/China: the trailing
