@@ -88,7 +88,7 @@ const unsigned long DISPLAY_CYCLE_INTERVAL = 60000; // 60 seconds
 const unsigned long REST_MODE_TIMEOUT = 45000;      // 45 seconds
 const unsigned long ALERT_DURATION = 25000;         // 25 seconds
 const unsigned long DEBOUNCE_DELAY = 300;           // 300ms
-const int HTTP_TIMEOUT = 5000;                      // 5 seconds
+const int HTTP_TIMEOUT = 15000;                     // 15s — the California M1.0+ feed is ~112KB; small feeds still return fast (this is only a ceiling)
 const byte DNS_PORT = 53;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -162,7 +162,10 @@ const char* API_NZ = "https://api.geonet.org.nz/quake?MMI=2";
 // USGS Region-Specific Feeds (much better than global!)
 const char* API_JAPAN = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"; // Will filter manually
 const char* API_CHINA = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"; // Global feed, filtered by bounds
-const char* API_CALIFORNIA = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/1.0_day.geojson"; // M1.0+: California is often quiet at M2.5+ in 24h, so use the lower feed to stay populated
+// M1.0+ feed: California is quiet at M2.5+ (the shared 2.5_day feed had 0 CA events), so use the
+// lower-threshold feed. The FDSN /fdsnws/ server-side query 404s (USGS/CDN-side, confirmed on the
+// device), so we can't server-filter. This feed is ~112KB, which needs the longer HTTP_TIMEOUT.
+const char* API_CALIFORNIA = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/1.0_day.geojson";
 const char* API_GLOBAL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"; // Only M4.5+ globally
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -624,7 +627,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v4.9", 8, 228, 1);
+    tft.drawString("v5.2", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1346,8 +1349,9 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.print(label);
 
   if (!q.isValid) {
-    tft.setTextColor(currentTheme.textSecondary);
-    tft.setCursor(xL, topY + 24); tft.print("NO DATA");
+    tft.setTextColor(currentTheme.textSecondary);          // a calm "nothing happening", not an error
+    tft.setCursor(xL, topY + 20); tft.print("NO RECENT");
+    tft.setCursor(xL, topY + 32); tft.print("QUAKES");
     return;
   }
 
@@ -2209,9 +2213,9 @@ void drawCaliforniaMap() {
 
   // Channel Islands — tiny land specks off the Southern California coast
   tft.fillCircle(mapLonToScreen(-119.75), mapLatToScreen(34.02), 2, currentTheme.mapOutline); // Santa Cruz
-  tft.fillCircle(mapLonToScreen(-120.10), mapLatToScreen(33.97), 1, currentTheme.mapOutline); // Santa Rosa
-  tft.fillCircle(mapLonToScreen(-118.42), mapLatToScreen(33.39), 1, currentTheme.mapOutline); // Santa Catalina
-  tft.fillCircle(mapLonToScreen(-118.55), mapLatToScreen(32.90), 1, currentTheme.mapOutline); // San Clemente
+  tft.fillCircle(mapLonToScreen(-120.10), mapLatToScreen(33.97), 2, currentTheme.mapOutline); // Santa Rosa
+  tft.fillCircle(mapLonToScreen(-118.42), mapLatToScreen(33.39), 2, currentTheme.mapOutline); // Santa Catalina
+  tft.fillCircle(mapLonToScreen(-118.55), mapLatToScreen(32.90), 2, currentTheme.mapOutline); // San Clemente
 
   // Cascadia Subduction Zone — offshore, NW California to Oregon border (dotted cyan)
   const float cascadia[][2] = {
@@ -2263,6 +2267,26 @@ void drawCaliforniaMap() {
     {35.38, -117.25}, {35.48, -116.70},
   };
   drawGeoDotted(garlock, sizeof(garlock) / sizeof(garlock[0]));
+
+  // ── Offshore features — fill the empty Pacific side of the map ──
+  // San Gregorio–Hosgri fault system: runs offshore, just west of the central coast
+  const float sanGregorio[][2] = {
+    {37.50, -123.00}, {37.10, -122.75}, {36.60, -122.35},
+    {36.10, -121.95}, {35.60, -121.55}, {35.10, -121.30}, {34.60, -121.10},
+  };
+  drawGeoDotted(sanGregorio, sizeof(sanGregorio) / sizeof(sanGregorio[0]));
+
+  // San Clemente fault zone: offshore Southern California, west of the Channel Islands
+  const float sanClemente[][2] = {
+    {33.80, -119.30}, {33.40, -118.95}, {33.00, -118.60}, {32.55, -118.20},
+  };
+  drawGeoDotted(sanClemente, sizeof(sanClemente) / sizeof(sanClemente[0]));
+
+  // Mendocino Fracture Zone: E-W ridge running out to sea off Cape Mendocino (far NW)
+  const float mendocino[][2] = {
+    {40.35, -124.55}, {40.30, -125.00}, {40.25, -125.35},
+  };
+  drawGeoDotted(mendocino, sizeof(mendocino) / sizeof(mendocino[0]));
 
   if (config.showCityDots) {
     tft.fillCircle(mapLonToScreen(-122.42), mapLatToScreen(37.77), 2, currentTheme.mapCity); // San Francisco
@@ -2420,13 +2444,15 @@ void checkForEarthquakes() {
   http.setTimeout(HTTP_TIMEOUT);
   
   int httpCode = http.GET();
+  Serial.printf("[fetch] HTTP %d  heap=%u  %s\n", httpCode, ESP.getFreeHeap(), apiURL);
   if (httpCode != 200) {
     http.end();
     return;
   }
-  
+
   String payload = http.getString();
   http.end();
+  Serial.printf("[fetch] payload=%u bytes  heap=%u\n", (unsigned)payload.length(), ESP.getFreeHeap());
   
   // For USGS feeds, use streaming parser with filter to reduce memory
   DynamicJsonDocument filter(200);
@@ -2444,7 +2470,11 @@ void checkForEarthquakes() {
   DynamicJsonDocument doc(32768);  // 32KB with filtering is enough
   DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
   
-  if (error) {
+  // Tolerate IncompleteInput: the device's HTTPS client caps reads at ~64KB, and California's
+  // M1.0+ feed is ~112KB. The feed is newest-first, so the 64KB prefix still holds plenty of
+  // recent in-region quakes — ArduinoJson keeps every COMPLETE feature it parsed before the cut.
+  // Other regions' feeds are <64KB so they parse whole (no IncompleteInput).
+  if (error && error != DeserializationError::IncompleteInput) {
     return;
   }
   
