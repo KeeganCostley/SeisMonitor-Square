@@ -627,7 +627,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.5", 8, 228, 1);
+    tft.drawString("v5.6", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -935,15 +935,23 @@ void drawWrappedText(const char* text, int startX, int startY, int maxWidth, int
 const int GEAR_CX = 308;   // settings cog — header right corner (also touch target)
 const int GEAR_CY = 10;
 
-// Gear/cog icon centred at (cx,cy): body disc with 8 protruding teeth + hub
-// hole. The teeth sticking out read clearly as a settings cog (~20px).
+// Gear/cog icon centred at (cx,cy): body disc with 8 RECTANGULAR radial teeth + hub
+// hole. Rectangular teeth (not round bumps) read as a cog, not a flower (~20px).
 void drawGearIcon(int cx, int cy, uint16_t color) {
-  for (int a = 0; a < 360; a += 45) {            // 8 teeth poking out past the body
+  const float ri = 5.0f, ro = 9.0f, hw = 1.6f;  // tooth inner/outer radius + half-width
+  for (int a = 0; a < 360; a += 45) {            // 8 rectangular teeth as radial spokes
     float r = a * 0.01745329f;
-    tft.fillCircle(cx + (int)(cosf(r) * 8), cy + (int)(sinf(r) * 8), 2, color);
+    float cr = cosf(r), sr = sinf(r);            // radial unit vector
+    float px = -sr, py = cr;                     // perpendicular unit vector (tooth width axis)
+    int ilx = cx + (int)(cr * ri + px * hw), ily = cy + (int)(sr * ri + py * hw);
+    int irx = cx + (int)(cr * ri - px * hw), iry = cy + (int)(sr * ri - py * hw);
+    int olx = cx + (int)(cr * ro + px * hw), oly = cy + (int)(sr * ro + py * hw);
+    int orx = cx + (int)(cr * ro - px * hw), ory = cy + (int)(sr * ro - py * hw);
+    tft.fillTriangle(ilx, ily, irx, iry, olx, oly, color);   // tooth = two triangles (a quad)
+    tft.fillTriangle(irx, iry, olx, oly, orx, ory, color);
   }
-  tft.fillCircle(cx, cy, 6, color);              // body
-  tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole
+  tft.fillCircle(cx, cy, 6, color);              // body disc (covers the teeth roots)
+  tft.fillCircle(cx, cy, 2, currentTheme.background);   // hub hole — the give-away it's a cog
 }
 
 // Native-script region glyphs: 中国 (China) and 日本 (Japan), rasterised from a real font
