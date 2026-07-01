@@ -17,7 +17,7 @@
  * 
  * Hardware: ESP32-S3 (QDTFT ES3C28P)
  * Display: 2.8" IPS 320x240 ILI9341  |  Touch: FT6336G capacitive I2C
- * Orientation: Landscape 320×240 (setRotation 1, inverted)
+ * Orientation: Landscape 320×240 (setRotation 3 — 180°-flipped for the enclosure, inverted)
  *
  * Version: 3.0 - Landscape layout (data left · map right · seismo bottom)
  * ═══════════════════════════════════════════════════════════════════════════
@@ -75,7 +75,7 @@ const uint8_t TOUCH_ADDR = 0x38;
 #define FONT_DATA   &FreeSansBold9pt7b   // (legacy) compact bold
 #define FONT_MAG    &FreeSansBold12pt7b  // Magnitude hero — a step bigger than the place name
 
-const int SCREEN_WIDTH  = 320;   // Landscape — full 320×240 canvas (setRotation 1)
+const int SCREEN_WIDTH  = 320;   // Landscape — full 320×240 canvas (setRotation 3, 180°-flipped)
 const int SCREEN_HEIGHT = 240;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -627,7 +627,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.4", 8, 228, 1);
+    tft.drawString("v5.5", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -683,7 +683,7 @@ void setup() {
   currentTheme = createSoftHUDTheme();  // Soft HUD — the chosen aesthetic
 
   tft.init();
-  tft.setRotation(1);      // Landscape — 320×240 (native 240×320 panel rotated)
+  tft.setRotation(3);      // Landscape — 320×240, rotated 180° (device mounted upside-down in the enclosure)
   tft.invertDisplay(true);
   tft.fillScreen(currentTheme.background);
 
@@ -2928,11 +2928,11 @@ bool readTouch(int16_t &x, int16_t &y) {
   return true;
 }
 
-// Map raw FT6336G portrait coords to landscape screen coords (setRotation 1).
+// Map raw FT6336G portrait coords to landscape screen coords (setRotation 3, 180°-flipped).
 // If the gear hit-zone lands in the wrong corner on hardware, flip these 2 lines.
 void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy) {
-  sx = ty;                                      // native Y (0-319) -> screen X
-  sy = (int16_t)(SCREEN_HEIGHT - 1 - tx);       // native X (0-239) -> screen Y (flipped)
+  sx = (int16_t)(SCREEN_WIDTH - 1 - ty);        // native Y (0-319) -> screen X (flipped for the 180° rotation)
+  sy = tx;                                       // native X (0-239) -> screen Y (flipped for the 180° rotation)
   sx = (int16_t)constrain((int)sx, 0, SCREEN_WIDTH - 1);
   sy = (int16_t)constrain((int)sy, 0, SCREEN_HEIGHT - 1);
 }
