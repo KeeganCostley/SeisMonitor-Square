@@ -515,17 +515,18 @@ String getTimeAgo(unsigned long timestampSec) {
 // Parse GeoNet ISO 8601 timestamp "2024-01-15T12:30:00.000Z" to epoch seconds
 unsigned long parseISOToEpoch(const char* iso) {
   if (!iso || strlen(iso) < 19) return 0;
-  struct tm t;
-  memset(&t, 0, sizeof(t));
   int year, month, day, hour, minute, second;
   if (sscanf(iso, "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second) >= 6) {
-    t.tm_year = year - 1900;
-    t.tm_mon = month - 1;
-    t.tm_mday = day;
-    t.tm_hour = hour;
-    t.tm_min = minute;
-    t.tm_sec = second;
-    return (unsigned long)mktime(&t);
+    // GeoNet timestamps are UTC ("...Z"). mktime() would interpret these fields as LOCAL time and
+    // apply the NZ offset, shifting the result 12h (the cause of every NZ quake reading ~12h too
+    // old). Convert UTC fields -> epoch directly, timezone-independent (days-from-civil, Hinnant).
+    int y = year - (month <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long days = era * 146097L + (long)doe - 719468L;             // days since 1970-01-01 (UTC)
+    return (unsigned long)(days * 86400L + hour * 3600L + minute * 60L + second);
   }
   return 0;
 }
@@ -627,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.6", 8, 228, 1);
+    tft.drawString("v5.7", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -790,6 +791,18 @@ void loop() {
     return;
   }
 
+  // Keep the header clock live: it otherwise only refreshes on a full UI redraw, so the HH:MM
+  // sat frozen at whatever it last showed. Redraw the header strip when the minute changes
+  // (cheap — header-only fillRect, doesn't touch the map/seismo).
+  {
+    static int lastClockMin = -1;
+    time_t tnow = time(nullptr);
+    if (tnow > 1600000000) {
+      struct tm lt; localtime_r(&tnow, &lt);
+      if (lt.tm_min != lastClockMin) { lastClockMin = lt.tm_min; drawHeader(); }
+    }
+  }
+
   if (now - lastSeismoUpdate > SEISMO_UPDATE_INTERVAL) {
     animateSeismograph();
     lastSeismoUpdate = now;
@@ -834,6 +847,8 @@ void loop() {
     unsigned long lT = latestQuake.timestamp, hT = highestRegionalQuake.timestamp;
     float         lM = latestQuake.magnitude, hM = highestRegionalQuake.magnitude;
     checkForEarthquakes();
+    Serial.printf("[time] now=%ld latest_ts=%lu age=%lds  (should match GeoNet)\n",
+                  (long)time(nullptr), latestQuake.timestamp, (long)time(nullptr) - (long)latestQuake.timestamp);
     // Repaint BOTH the data block and the map when a poll changes the latest/highest
     // quake — otherwise the map (repainted by the pulse) and the cells drift out of sync.
     if (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
