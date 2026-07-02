@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.7", 8, 228, 1);
+    tft.drawString("v5.8", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -808,22 +808,23 @@ void loop() {
     lastSeismoUpdate = now;
   }
 
-  // Live epicenter pulse — radiating rings on the LATEST quake so the screen feels alive
-  // and you're likely to catch it. Lively for a fresh quake (every ~90s in the first hour),
-  // calmer after (every ~3 min). First burst ~8s after data.
+  // Live epicenter pulse — radiating rings on the LATEST quake, but ONLY while it's fresh: every
+  // 10 minutes during its first hour, then nothing (no animation for older quakes). A newly-arrived
+  // quake pulses ~8s after it appears.
   {
-    static unsigned long nextPulse = 0, pulseStart = 0;
+    static unsigned long nextPulse = 0, pulseStart = 0, pulsedTs = 0;
     static bool pulseActive = false;
-    bool canPulse = latestQuake.isValid && strcmp(config.region, "Global") != 0;   // globe self-animates
-    if (canPulse) {
-      if (nextPulse == 0) nextPulse = now + 8000UL;
-      if (!pulseActive && now >= nextPulse) {
-        pulseActive = true; pulseStart = now;
-        time_t te = time(nullptr);
-        unsigned long age = (te > 1600000000 && latestQuake.timestamp > 0 && (unsigned long)te > latestQuake.timestamp)
-                            ? ((unsigned long)te - latestQuake.timestamp) : 999999UL;
-        nextPulse = now + (age < 3600UL ? 90000UL : 180000UL);   // 90s in the first hour, else 3 min
-      }
+    time_t te = time(nullptr);
+    unsigned long age = (te > 1600000000 && latestQuake.timestamp > 0 && (unsigned long)te > latestQuake.timestamp)
+                        ? ((unsigned long)te - latestQuake.timestamp) : 999999UL;
+    if (latestQuake.isValid && latestQuake.timestamp != pulsedTs) {   // a new quake just arrived
+      pulsedTs = latestQuake.timestamp;
+      nextPulse = now + 8000UL;                                       // first burst shortly after it appears
+    }
+    bool canPulse = latestQuake.isValid && strcmp(config.region, "Global") != 0 && age < 3600UL;  // first hour only
+    if (canPulse && !pulseActive && now >= nextPulse) {
+      pulseActive = true; pulseStart = now;
+      nextPulse = now + 600000UL;                                     // then every 10 minutes
     }
     if (pulseActive) {
       if (now - pulseStart < 3500UL) {                           // ~3.5s burst — long enough to notice
