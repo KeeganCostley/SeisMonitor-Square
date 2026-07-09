@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.4", 8, 228, 1);
+    tft.drawString("v6.6", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -848,8 +848,9 @@ void loop() {
     unsigned long lT = latestQuake.timestamp, hT = highestRegionalQuake.timestamp;
     float         lM = latestQuake.magnitude, hM = highestRegionalQuake.magnitude;
     checkForEarthquakes();
-    Serial.printf("[time] now=%ld latest_ts=%lu age=%lds  (should match GeoNet)\n",
-                  (long)time(nullptr), latestQuake.timestamp, (long)time(nullptr) - (long)latestQuake.timestamp);
+    Serial.printf("[data] region=%s valid=%d mag=%.1f latest_ts=%lu age=%lds loc=[%s]\n",
+                  config.region, (int)latestQuake.isValid, latestQuake.magnitude, latestQuake.timestamp,
+                  (long)time(nullptr) - (long)latestQuake.timestamp, latestQuake.location);
     // Repaint BOTH the data block and the map when a poll changes the latest/highest
     // quake — otherwise the map (repainted by the pulse) and the cells drift out of sync.
     if (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
@@ -2904,16 +2905,17 @@ bool sensBarHit(int sx, int sy) {
 }
 
 // Set config.magThreshold from a tap x on the bar (snapped to 0.5), and persist it.
-void setSensitivityFromTap(int sx) {
+bool setSensitivityFromTap(int sx) {                  // returns true only if the value actually changed
   float frac = (float)(sx - SENS_X) / (float)SENS_W;
   if (frac < 0) frac = 0;
   if (frac > 1) frac = 1;
   float v = SENS_MIN + frac * (SENS_MAX - SENS_MIN);
-  v = roundf(v / 0.5f) * 0.5f;
+  v = roundf(v * 10.0f) / 10.0f;                     // snap to 0.1 — fine control via the live drag
   if (v < SENS_MIN) v = SENS_MIN;
   if (v > SENS_MAX) v = SENS_MAX;
-  config.magThreshold = v;
-  saveConfig();
+  if (v == config.magThreshold) return false;
+  config.magThreshold = v;                            // NOTE: persisted on drag-release (avoids per-frame flash writes)
+  return true;
 }
 
 // Settings screen — REGION rows (left) + WIFI connection details (right).
@@ -3092,11 +3094,22 @@ void handleButton() {
   bool touching = readTouch(tx, ty);
 
   static unsigned long pressStart = 0, lastSeen = 0;
-  static bool pressActed = false, releasedSinceOpen = true;
+  static bool pressActed = false, releasedSinceOpen = true, sensDirty = false;
 
   if (touching) {
     if (pressStart == 0) pressStart = now;
     lastSeen = now;
+
+    // Sensitivity bar = a live drag: update continuously (not once-per-press) so it feels smooth.
+    if (showingRegionPicker && releasedSinceOpen && (now - pickerStartTime > 400)) {
+      int16_t dsx, dsy; mapTouch(tx, ty, dsx, dsy);
+      if (sensBarHit(dsx, dsy)) {
+        if (setSensitivityFromTap(dsx)) { drawSensitivityBar(); sensDirty = true; }  // redraw only on change (no flicker)
+        pressActed = true;                     // consume the press so region/close logic skips it
+        lastActivity = now;
+      }
+    }
+
     if (!pressActed && (now - pressStart >= 45)) {
       pressActed   = true;
       lastActivity = now;
@@ -3115,8 +3128,8 @@ void handleButton() {
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
           if (picked >= 0)             selectRegion(picked);                       // chose a region
-          else if (sensBarHit(sx, sy)) { setSensitivityFromTap(sx); drawSensitivityBar(); }  // sensitivity bar
           else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
+          // (the sensitivity bar is handled by the live-drag block above)
           // Gear corner (top-right) deliberately does NOT close.
         }
       } else if (sx > 264 && sy < 36) {                             // top-right corner — bigger, more forgiving cog zone
@@ -3131,6 +3144,7 @@ void handleButton() {
       }
     }
   } else if (now - lastSeen > 300) {                                  // finger confirmed UP for 300ms
+    if (sensDirty) { saveConfig(); sensDirty = false; }               // persist the sensitivity once the drag ends
     pressStart = 0; pressActed = false; releasedSinceOpen = true;     // re-arm + allow settings taps
   }
 
