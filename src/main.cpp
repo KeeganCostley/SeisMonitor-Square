@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.8", 8, 228, 1);
+    tft.drawString("v6.9", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1335,12 +1335,12 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   int len = demacron(text, a, mc, sizeof(a));
   tft.setTextColor(currentTheme.textPrimary);
 
-  // Font choice: FreeSans9pt only if the whole name fits with BREATHING ROOM (so a long name isn't
-  // rammed against the LATEST row + meta with no gap); otherwise drop to the compact Font 1 — which
-  // is smaller AND leaves the centring room to give it a gap top and bottom.
+  // Font choice: keep the readable FreeSans9pt for the common 2-3 line names (Font 1 is too small a
+  // drop); only a genuinely huge name (needs > maxH/14 lines) falls back to Font 1. Long names get
+  // room instead via tighter line spacing + the top padding below, not by shrinking the glyphs.
   tft.setFreeFont(FONT_LABEL);
-  bool ov; int n9 = wrapMeasure(a, len, maxW, 6, ov);          // true 9pt line count
-  bool small = ov || (n9 * 14 > maxH - 12);                    // won't fit with ~12px spare -> go smaller
+  bool ov; wrapMeasure(a, len, maxW, maxH / 14, ov);
+  bool small = ov;
   int lineH, cursOff;
   if (small) { tft.setTextFont(1); lineH = 10; cursOff = 1; }   // Font 1 cursor is top-left
   else       { lineH = 14; cursOff = 11; }                      // FreeFont cursor is the baseline
@@ -1350,7 +1350,8 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   // cell — a 2-line name breathes instead of sitting as a tight little block jammed together.
   bool ov2; int nLines = wrapMeasure(a, len, maxW, maxLines, ov2);
   int stepH = lineH, fill = maxH / nLines;
-  if (fill > lineH) stepH = min(lineH + 4, fill);    // extra line spacing when there's spare height
+  if (fill > lineH + 3) stepH = min(lineH + 4, fill); // spread only short names (real spare height); a full
+                                                      // 3-line name stays tight so it fits with a gap, not filling
   int y0 = y + (maxH - nLines * stepH) / 2; if (y0 < y) y0 = y;
 
   int pos = 0, lines = 0; char line[88];
