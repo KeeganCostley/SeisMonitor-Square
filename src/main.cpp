@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.7", 8, 228, 1);
+    tft.drawString("v6.8", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1335,10 +1335,12 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   int len = demacron(text, a, mc, sizeof(a));
   tft.setTextColor(currentTheme.textPrimary);
 
-  // Font choice: FreeSans9pt if the whole name fits in maxH/14 lines, else drop to Font 1.
+  // Font choice: FreeSans9pt only if the whole name fits with BREATHING ROOM (so a long name isn't
+  // rammed against the LATEST row + meta with no gap); otherwise drop to the compact Font 1 — which
+  // is smaller AND leaves the centring room to give it a gap top and bottom.
   tft.setFreeFont(FONT_LABEL);
-  bool ov; wrapMeasure(a, len, maxW, maxH / 14, ov);
-  bool small = ov;
+  bool ov; int n9 = wrapMeasure(a, len, maxW, 6, ov);          // true 9pt line count
+  bool small = ov || (n9 * 14 > maxH - 12);                    // won't fit with ~12px spare -> go smaller
   int lineH, cursOff;
   if (small) { tft.setTextFont(1); lineH = 10; cursOff = 1; }   // Font 1 cursor is top-left
   else       { lineH = 14; cursOff = 11; }                      // FreeFont cursor is the baseline
@@ -1442,7 +1444,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.print(dep);
 
   // ── Place name fills the gap between row 1 and the meta (auto-fit + centred + spread) ──
-  int placeTop = topY + 16;                          // a touch higher → a little more room for the location
+  int placeTop = topY + 18;                          // clear gap below the LATEST/M row so the place never rams it
   drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
 }
 
