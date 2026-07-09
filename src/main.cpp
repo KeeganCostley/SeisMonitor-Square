@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.3", 8, 228, 1);
+    tft.drawString("v6.4", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1016,8 +1016,10 @@ void drawHeader() {
     drawGlyphGray(rx, 3, GLYPH_RI, acc, currentTheme.background);
     drawGlyphGray(rx + 18, 3, GLYPH_HON, acc, currentTheme.background);
     tft.setCursor(rx + 38, 7); tft.print("JAPAN");
+  } else if (strcmp(config.region, "California") == 0) {
+    tft.setCursor(rx, 7); tft.print("CALIFORNIA, USA");        // no second script — state + country reads nicely
   } else {
-    tft.setCursor(rx, 7); tft.print(config.region);            // California / Global
+    tft.setCursor(rx, 7); tft.print(config.region);            // Global
   }
 
   // ── Right: HH:MM · WIFI + cog (secondary) ──
