@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.1", 8, 228, 1);
+    tft.drawString("v6.2", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2843,6 +2843,58 @@ const int PICK_Y0    = 48;
 const int PICK_H     = 24;
 const int PICK_PITCH = 28;
 
+// ── Alert sensitivity control (bottom-right of the settings screen) ──
+// config.magThreshold is the minimum magnitude that fires the "EQ DETECTED" alert. Lower = more
+// sensitive = more alerts (catch smaller / more-frequent quakes live); higher = only the big ones.
+const float SENS_MIN = 0.5f, SENS_MAX = 5.0f;
+const int SENS_X = 174, SENS_Y = 166, SENS_W = 132, SENS_H = 13;
+
+void drawSensitivityBar() {
+  tft.fillRect(SENS_X - 2, 140, SCREEN_WIDTH - (SENS_X - 2), 62, currentTheme.background);   // clear area
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.setCursor(SENS_X, 148);
+  tft.print("ALERT SENSITIVITY");
+  char v[8]; snprintf(v, sizeof(v), "M%.1f", config.magThreshold);
+  tft.setTextColor(currentTheme.dataLatest);
+  int vw = tft.textWidth(v);
+  tft.setCursor(SCREEN_WIDTH - 8 - vw, 148);
+  tft.print(v);
+  float frac = (config.magThreshold - SENS_MIN) / (SENS_MAX - SENS_MIN);
+  if (frac < 0) frac = 0;
+  if (frac > 1) frac = 1;
+  tft.drawRoundRect(SENS_X, SENS_Y, SENS_W, SENS_H, 3, currentTheme.border);
+  int fillW = (int)(frac * (SENS_W - 2) + 0.5f);
+  if (fillW > 0) tft.fillRoundRect(SENS_X + 1, SENS_Y + 1, fillW, SENS_H - 2, 2, currentTheme.dataLatest);
+  tft.setTextColor(currentTheme.sub);
+  tft.setCursor(SENS_X, SENS_Y + SENS_H + 4);
+  tft.print("M0.5");
+  const char* rt = "M5.0";
+  tft.setCursor(SENS_X + SENS_W - tft.textWidth(rt), SENS_Y + SENS_H + 4);
+  tft.print(rt);
+  tft.setCursor(SENS_X, SENS_Y + SENS_H + 15);
+  tft.print("LOWER = MORE ALERTS");
+}
+
+// True if a settings-screen tap fell on the sensitivity bar (forgiving margins).
+bool sensBarHit(int sx, int sy) {
+  return sx >= SENS_X - 8 && sx <= SENS_X + SENS_W + 8 &&
+         sy >= SENS_Y - 20 && sy <= SENS_Y + SENS_H + 16;
+}
+
+// Set config.magThreshold from a tap x on the bar (snapped to 0.5), and persist it.
+void setSensitivityFromTap(int sx) {
+  float frac = (float)(sx - SENS_X) / (float)SENS_W;
+  if (frac < 0) frac = 0;
+  if (frac > 1) frac = 1;
+  float v = SENS_MIN + frac * (SENS_MAX - SENS_MIN);
+  v = roundf(v / 0.5f) * 0.5f;
+  if (v < SENS_MIN) v = SENS_MIN;
+  if (v > SENS_MAX) v = SENS_MAX;
+  config.magThreshold = v;
+  saveConfig();
+}
+
 // Settings screen — REGION rows (left) + WIFI connection details (right).
 // Tap a region to switch; tap < (top-left) / BOOT / 30s to close. The top-right gear
 // does NOT close (that corner is where the recurring phantom second-tap landed).
@@ -2928,11 +2980,13 @@ void drawRegionPicker() {
     tft.print(val);
   }
 
+  drawSensitivityBar();
+
   // ── Footer hint ──
   tft.drawFastHLine(0, SCREEN_HEIGHT - 16, SCREEN_WIDTH, currentTheme.border);
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.sub);
-  tft.drawCentreString("TAP REGION TO SWITCH    TAP < TO CLOSE", 160, SCREEN_HEIGHT - 11, 1);
+  tft.drawCentreString("TAP: REGION  ·  SENSITIVITY BAR  ·  < CLOSE", 160, SCREEN_HEIGHT - 11, 1);
 }
 
 // Returns picker row 0..4 under a screen point, or -1 if none.
@@ -3040,6 +3094,7 @@ void handleButton() {
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
           if (picked >= 0)             selectRegion(picked);                       // chose a region
+          else if (sensBarHit(sx, sy)) { setSensitivityFromTap(sx); drawSensitivityBar(); }  // sensitivity bar
           else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
           // Gear corner (top-right) deliberately does NOT close.
         }
