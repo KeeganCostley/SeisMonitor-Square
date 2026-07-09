@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.2", 8, 228, 1);
+    tft.drawString("v6.3", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1406,10 +1406,9 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   int topY = cellY + 4;
 
   // ── Row 1: ◆ LABEL (left, centred on the magnitude) + M#.# hero (right) ──
-  int rowMid = topY + 8;
   tft.setTextFont(1);
   tft.setTextColor(accent);
-  tft.setCursor(xL, rowMid - 4);                      // diamond removed — frees room so "24H HIGH" + M#.# never collide
+  tft.setCursor(xL, topY + 7);                        // baseline-aligned with the magnitude below (clean row)
   tft.print(label);
 
   if (!q.isValid) {
@@ -1477,7 +1476,9 @@ void drawRings() {
 
 // Epicentre marker — a target ring sized by magnitude with the core dot on the
 // (projected) location, plus an M-value tag that ties it to the data block.
-void drawMarker(float lat, float lon, uint16_t col, float mag) {
+// stack: 0 = label to the right (default); -1 = centred ABOVE the ring; +1 = centred BELOW.
+// The above/below modes let two nearby markers keep their M-tags from colliding.
+void drawMarker(float lat, float lon, uint16_t col, float mag, int stack = 0) {
   int x = mapLonToScreen(lon), y = mapLatToScreen(lat);
   if (x < MAP_X || x > MAP_X + MAP_WIDTH || y < MAP_Y || y > MAP_Y + MAP_HEIGHT) return;
   int r = constrain(4 + (int)mag, 4, 12);    // ring radius reflects magnitude
@@ -1485,14 +1486,23 @@ void drawMarker(float lat, float lon, uint16_t col, float mag) {
   tft.drawCircle(x, y, r - 1, col);          // 2px ring
   tft.fillCircle(x, y, 2, col);              // core dot on the location
 
-  // Magnitude tag (same colour as the data block) — right of the dot, or left near the edge
   char m[8]; snprintf(m, sizeof(m), "M%.1f", mag);
   tft.setTextFont(1);
   tft.setTextColor(col);
   int lw = tft.textWidth(m);
-  int lx = x + r + 3;
-  if (lx + lw > MAP_X + MAP_WIDTH - 2) lx = x - r - 3 - lw;   // flip to stay on the panel
-  tft.setCursor(lx, y - 3);
+  int lx, ly;
+  if (stack == 0) {                                              // right of the dot (flip near edge)
+    lx = x + r + 3; ly = y - 3;
+    if (lx + lw > MAP_X + MAP_WIDTH - 2) lx = x - r - 3 - lw;
+  } else {                                                       // centred above (-1) or below (+1)
+    lx = x - lw / 2;
+    ly = (stack < 0) ? (y - r - 9) : (y + r + 2);
+  }
+  if (lx < MAP_X + 2) lx = MAP_X + 2;                            // keep the tag on the panel
+  if (lx + lw > MAP_X + MAP_WIDTH - 2) lx = MAP_X + MAP_WIDTH - 2 - lw;
+  if (ly < MAP_Y + 1) ly = MAP_Y + 1;
+  if (ly > MAP_Y + MAP_HEIGHT - 9) ly = MAP_Y + MAP_HEIGHT - 9;
+  tft.setCursor(lx, ly);
   tft.print(m);
 }
 
@@ -1518,16 +1528,25 @@ void drawMap() {
         tft.fillCircle(x, y, (recentQuakes[i].mag >= 6.0) ? 2 : 1, currentTheme.sub);
       }
     }
-    if (latestQuake.isValid)
-      drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, latestQuake.magnitude);
-    // Skip the 24h-high marker when it's the same quake/spot as the latest — otherwise the
-    // two rings + magnitude tags overlap and the number is unreadable.
-    bool sameSpot = latestQuake.isValid && highestRegionalQuake.isValid &&
-                    (latestQuake.timestamp == highestRegionalQuake.timestamp ||
-                     (fabsf(latestQuake.latitude  - highestRegionalQuake.latitude)  < 0.3f &&
-                      fabsf(latestQuake.longitude - highestRegionalQuake.longitude) < 0.3f));
-    if (highestRegionalQuake.isValid && !sameSpot)
-      drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, highestRegionalQuake.magnitude);
+    // Latest + 24h-high markers. If they're the SAME quake, draw just one. If they're DIFFERENT
+    // but land close together ON THE MAP, stagger the M-tags (latest above, high below) so the
+    // numbers don't smear into each other — a degree-based test misses this (nearby places can be
+    // >0.3° apart yet only a few pixels apart on a small regional map).
+    bool haveL = latestQuake.isValid, haveH = highestRegionalQuake.isValid;
+    bool sameQuake = haveL && haveH &&
+                     (latestQuake.timestamp == highestRegionalQuake.timestamp ||
+                      (fabsf(latestQuake.latitude  - highestRegionalQuake.latitude)  < 0.15f &&
+                       fabsf(latestQuake.longitude - highestRegionalQuake.longitude) < 0.15f));
+    bool close = false;
+    if (haveL && haveH && !sameQuake) {
+      int dx = mapLonToScreen(latestQuake.longitude) - mapLonToScreen(highestRegionalQuake.longitude);
+      int dy = mapLatToScreen(latestQuake.latitude)  - mapLatToScreen(highestRegionalQuake.latitude);
+      close = (abs(dx) < 52 && abs(dy) < 26);
+    }
+    if (haveL)
+      drawMarker(latestQuake.latitude, latestQuake.longitude, currentTheme.dataLatest, latestQuake.magnitude, close ? -1 : 0);
+    if (haveH && !sameQuake)
+      drawMarker(highestRegionalQuake.latitude, highestRegionalQuake.longitude, currentTheme.dataHighest, highestRegionalQuake.magnitude, close ? 1 : 0);
 
     // Data-source credit — bottom-right of the map (GeoNet for NZ, USGS otherwise)
     const char* src = (strcmp(config.region, "NZ") == 0) ? "POWERED BY GEONET" : "POWERED BY USGS";
