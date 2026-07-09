@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.0", 8, 228, 1);
+    tft.drawString("v6.1", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1341,9 +1341,12 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   else       { lineH = 14; cursOff = 11; }                      // FreeFont cursor is the baseline
   int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1;
 
-  // Vertical centring: with the chosen font, count the lines and offset the block into the middle.
+  // Count lines, then centre the block AND (for short names) spread the lines to use more of the
+  // cell — a 2-line name breathes instead of sitting as a tight little block jammed together.
   bool ov2; int nLines = wrapMeasure(a, len, maxW, maxLines, ov2);
-  int y0 = y + (maxH - nLines * lineH) / 2; if (y0 < y) y0 = y;
+  int stepH = lineH, fill = maxH / nLines;
+  if (fill > lineH) stepH = min(lineH + 4, fill);    // extra line spacing when there's spare height
+  int y0 = y + (maxH - nLines * stepH) / 2; if (y0 < y) y0 = y;
 
   int pos = 0, lines = 0; char line[88];
   while (pos < len && lines < maxLines) {
@@ -1360,7 +1363,7 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
       }
     }
     int pl = end - pos; if (pl <= 0) pl = 1;
-    int lineY = y0 + lines * lineH + cursOff;
+    int lineY = y0 + lines * stepH + cursOff;
 
     if (lines == maxLines - 1 && end < len) {         // last line + more text → ellipsis
       while (pl > 0) {
@@ -1417,7 +1420,7 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   }
 
   char m[8]; snprintf(m, sizeof(m), "M%.1f", q.magnitude);
-  tft.setFreeFont(FONT_DATA);                        // compact bold — stands out by weight, not size
+  tft.setFreeFont(FONT_LABEL);                       // regular weight — the accent colour carries it, so it reads lighter
   tft.setTextColor(accent);
   int mw = tft.textWidth(m);
   tft.setCursor(xL + maxW - mw, topY + 14);          // right-aligned, centred on the label row
@@ -1436,8 +1439,8 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
   tft.setCursor(mx + 5, metaY);
   tft.print(dep);
 
-  // ── Place name fills the gap between row 1 and the meta (one font, never overlaps) ──
-  int placeTop = topY + 18;
+  // ── Place name fills the gap between row 1 and the meta (auto-fit + centred + spread) ──
+  int placeTop = topY + 16;                          // a touch higher → a little more room for the location
   drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
 }
 
