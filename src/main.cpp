@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.9", 8, 228, 1);
+    tft.drawString("v6.0", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1259,6 +1259,7 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
 
 // Wrap demacron'd ASCII `a` at the CURRENT font into <= maxLines; returns line
 // count and sets `overflow` true if text remained past the cap.
+static bool connectorAfter(const char* a, int sp, int len);   // forward decl (defined below)
 static int wrapMeasure(const char* a, int len, int maxW, int maxLines, bool& overflow) {
   int pos = 0, lines = 0; char ln[80];
   while (pos < len && lines < maxLines) {
@@ -1268,7 +1269,7 @@ static int wrapMeasure(const char* a, int len, int maxW, int maxLines, bool& ove
     else {
       end = pos; int ls = -1;
       for (int i = pos; i < len && i - pos < 79; i++) {
-        if (a[i] == ' ') ls = i;
+        if (a[i] == ' ' && !connectorAfter(a, i, len)) ls = i;
         int s = i + 1 - pos; strncpy(ln, a + pos, s); ln[s] = '\0';
         if (tft.textWidth(ln) > maxW) { end = (ls > pos) ? ls : i; break; }
         end = i + 1;
@@ -1311,10 +1312,6 @@ static bool connectorAfter(const char* a, int sp, int len) {
   return (a[j] == 'o' && a[j + 1] == 'f') || (a[j] == 'd' && a[j + 1] == 'e');
 }
 
-// Place name fitted into a box (x,y; width maxW, height maxH). ALWAYS one font
-// (FreeSans9pt, with Māori macron bars) — no pixel-font switching, so it reads the
-// same on every region. Wraps to as many 14px lines as fit maxH; a genuinely huge
-// name (rare, after abbreviation) trims the last line with "...".
 // Optical left-alignment: glyphs whose visual mass sits inset (T/V/W/Y, and A/J to a lesser degree)
 // look indented when flush-left under a straight-stem glyph or a digit — even though the string
 // starts at the same x. Nudge them a hair toward the margin so wrapped lines line up to the eye.
@@ -1326,13 +1323,28 @@ static int opticalLeftNudge(char c) {
   }
 }
 
+// Place name fitted into a box (x,y; width maxW, height maxH). Picks the largest font whose FULL wrap
+// fits — FreeSans9pt (lineH 14), else the compact built-in Font 1 (lineH 10) — so long "City, Country"
+// names fit instead of truncating. Centres the wrapped block vertically (a 2-line name sits mid-cell,
+// not jammed to the top). Māori macron bars + optical left-alignment applied.
 void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   char a[80]; bool mc[80];
   int len = demacron(text, a, mc, sizeof(a));
-  tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
-  const int lineH = 14, base = 11;
+
+  // Font choice: FreeSans9pt if the whole name fits in maxH/14 lines, else drop to Font 1.
+  tft.setFreeFont(FONT_LABEL);
+  bool ov; wrapMeasure(a, len, maxW, maxH / 14, ov);
+  bool small = ov;
+  int lineH, cursOff;
+  if (small) { tft.setTextFont(1); lineH = 10; cursOff = 1; }   // Font 1 cursor is top-left
+  else       { lineH = 14; cursOff = 11; }                      // FreeFont cursor is the baseline
   int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1;
+
+  // Vertical centring: with the chosen font, count the lines and offset the block into the middle.
+  bool ov2; int nLines = wrapMeasure(a, len, maxW, maxLines, ov2);
+  int y0 = y + (maxH - nLines * lineH) / 2; if (y0 < y) y0 = y;
+
   int pos = 0, lines = 0; char line[88];
   while (pos < len && lines < maxLines) {
     int rem = min(len - pos, 79); strncpy(line, a + pos, rem); line[rem] = '\0';
@@ -1348,7 +1360,7 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
       }
     }
     int pl = end - pos; if (pl <= 0) pl = 1;
-    int lineY = y + lines * lineH + base;
+    int lineY = y0 + lines * lineH + cursOff;
 
     if (lines == maxLines - 1 && end < len) {         // last line + more text → ellipsis
       while (pl > 0) {
@@ -1374,7 +1386,8 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
       char ch[2] = { a[pos + k], '\0' };
       int vw = tft.textWidth(ch);
       bool upper = (a[pos + k] >= 'A' && a[pos + k] <= 'Z');
-      tft.drawFastHLine(vx + 1, lineY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
+      int barY = small ? (lineY - 1) : (lineY - (upper ? 15 : 12));
+      tft.drawFastHLine(vx + 1, barY, (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
     }
     lines++;
     pos = end; while (pos < len && a[pos] == ' ') pos++;
@@ -2462,6 +2475,18 @@ void renderGlobe(T* g, int cx, int cy) {
     globeMarkerT(g, highestRegionalQuake.latitude, highestRegionalQuake.longitude, cx, cy, currentTheme.dataHighest, highestRegionalQuake.magnitude);
 }
 
+// "POWERED BY USGS" credit drawn bottom-right into the given target (globe sprite or the panel), so
+// Global carries the same data-source credit as the flat regions. Baked into the sprite each frame so
+// the spin never wipes it. (rightX/bottomY are the target's right/bottom edge in its own coords.)
+template <typename T> void drawGlobeCredit(T* g, int rightX, int bottomY) {
+  g->setTextFont(1);
+  g->setTextColor(currentTheme.textSecondary);
+  const char* src = "POWERED BY USGS";
+  int sw = g->textWidth(src);
+  g->setCursor(rightX - sw - 4, bottomY - 10);
+  g->print(src);
+}
+
 void drawGlobalMap() {
   if (!globeSprTried) {                          // lazy one-time sprite allocation (panel interior)
     globeSprTried = true;
@@ -2471,9 +2496,11 @@ void drawGlobalMap() {
   if (globeSprReady) {
     globeSpr.fillSprite(currentTheme.mapOcean);
     renderGlobe(&globeSpr, MAP_CX - (MAP_X + 1), MAP_CY - (MAP_Y + 1));   // sprite-local centre
+    drawGlobeCredit(&globeSpr, globeSpr.width(), globeSpr.height());      // baked in — static over the spin
     globeSpr.pushSprite(MAP_X + 1, MAP_Y + 1);                            // inside the border
   } else {
     renderGlobe(&tft, MAP_CX, MAP_CY);           // fallback: straight to the panel (static)
+    drawGlobeCredit(&tft, MAP_X + MAP_WIDTH, MAP_Y + MAP_HEIGHT);
   }
 }
 
@@ -3013,7 +3040,7 @@ void handleButton() {
           else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
           // Gear corner (top-right) deliberately does NOT close.
         }
-      } else if (sx > 280 && sy < 30) {
+      } else if (sx > 264 && sy < 36) {                             // top-right corner — bigger, more forgiving cog zone
         Serial.println("  -> OPEN picker");
         drawRegionPicker();                                           // gear (top-right) → settings
         releasedSinceOpen = false;                                    // require a lift before any action
