@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v5.8", 8, 228, 1);
+    tft.drawString("v5.9", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1315,6 +1315,17 @@ static bool connectorAfter(const char* a, int sp, int len) {
 // (FreeSans9pt, with Māori macron bars) — no pixel-font switching, so it reads the
 // same on every region. Wraps to as many 14px lines as fit maxH; a genuinely huge
 // name (rare, after abbreviation) trims the last line with "...".
+// Optical left-alignment: glyphs whose visual mass sits inset (T/V/W/Y, and A/J to a lesser degree)
+// look indented when flush-left under a straight-stem glyph or a digit — even though the string
+// starts at the same x. Nudge them a hair toward the margin so wrapped lines line up to the eye.
+static int opticalLeftNudge(char c) {
+  switch (c) {
+    case 'T': case 'V': case 'W': case 'Y': return 2;
+    case 'A': case 'J': return 1;
+    default: return 0;
+  }
+}
+
 void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   char a[80]; bool mc[80];
   int len = demacron(text, a, mc, sizeof(a));
@@ -1346,19 +1357,20 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
         pl--;
       }
       char outl[92]; snprintf(outl, sizeof(outl), "%.*s...", pl, a + pos);
-      tft.setCursor(x, lineY); tft.print(outl);
+      tft.setCursor(x - opticalLeftNudge(outl[0]), lineY); tft.print(outl);
       break;
     }
 
     strncpy(line, a + pos, pl); line[pl] = '\0';
     while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
-    tft.setCursor(x, lineY);
+    int lx = x - opticalLeftNudge(line[0]);           // optical margin: pull T/V/W/Y/A/J toward the edge
+    tft.setCursor(lx, lineY);
     tft.print(line);
 
     for (int k = 0; k < pl; k++) {                    // Māori macron bars
       if (!mc[pos + k]) continue;
       char pre[80]; strncpy(pre, a + pos, k); pre[k] = '\0';
-      int vx = x + tft.textWidth(pre);
+      int vx = lx + tft.textWidth(pre);
       char ch[2] = { a[pos + k], '\0' };
       int vw = tft.textWidth(ch);
       bool upper = (a[pos + k] >= 'A' && a[pos + k] <= 'Z');
