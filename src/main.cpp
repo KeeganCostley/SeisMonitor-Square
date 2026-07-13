@@ -628,7 +628,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.9", 8, 228, 1);
+    tft.drawString("v6.10", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1446,7 +1446,9 @@ void drawDataCell(int cellY, int cellH, EarthquakeData &q, const char* label, ui
 
   // ── Place name fills the gap between row 1 and the meta (auto-fit + centred + spread) ──
   int placeTop = topY + 18;                          // clear gap below the LATEST/M row so the place never rams it
-  drawPlaceNameFit(q.location, xL, placeTop, maxW, metaY - 3 - placeTop);
+  // Give the place name the FULL cell width (wider than the mag's column) so borderline names like
+  // "10km east of Waipukurau" wrap to a tidy 2 lines at normal size instead of spilling to 3 + shrinking.
+  drawPlaceNameFit(q.location, xL, placeTop, DATA_WIDTH - 9, metaY - 3 - placeTop);
 }
 
 void drawDataPanel() {
