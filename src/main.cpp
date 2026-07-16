@@ -578,6 +578,7 @@ void processQuakes(String& payload, bool usingNZ);
 void requestFetch();
 void fetchTask(void* param);
 void displayEarthquakeAlert(EarthquakeData* quake);
+void animateAlertRings();
 void drawRegionPicker();
 int  regionAtPoint(int16_t sx, int16_t sy);
 void selectRegion(int idx);
@@ -797,6 +798,9 @@ void loop() {
       showingAlert = false;
       drawUI();
       lastActivity = now;
+    } else {
+      static unsigned long lastRing = 0;                 // keep the activity rings radiating
+      if (now - lastRing > 55) { animateAlertRings(); lastRing = now; }
     }
     return;
   }
@@ -2821,81 +2825,75 @@ void fetchTask(void*) {
 // EARTHQUAKE ALERT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── ACTIVITY DETECTED screen ────────────────────────────────────────────────
+// Deliberately NOT a quieter copy of the main screen: full-bleed, magnitude-coloured, no panels —
+// just the one quake that's happening RIGHT NOW, with activity rings radiating out of its magnitude.
+const int ALERT_CX = 160, ALERT_CY = 124;
+const int ALERT_R0 = 36, ALERT_R1 = 80;      // radiating band (kept clear of the header + place text)
+static int      alertRingPhase = 0;
+static uint16_t alertRingCol   = 0;
+
+// Scale an RGB565 colour's brightness by num/den (used to fade the rings as they travel out).
+static uint16_t dimColor(uint16_t c, int num, int den) {
+  if (num < 0) num = 0;
+  if (num > den) num = den;
+  int r = ((c >> 11) & 0x1F) * num / den;
+  int g = ((c >> 5)  & 0x3F) * num / den;
+  int b = ( c        & 0x1F) * num / den;
+  return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+// One frame of the radiating rings: erase where they were, step out, redraw fading as they go.
+void animateAlertRings() {
+  const int span = ALERT_R1 - ALERT_R0;
+  const int n = 3, gap = span / n;
+  for (int k = 0; k < n; k++) {
+    int r = ALERT_R0 + ((alertRingPhase + k * gap) % span);
+    tft.drawCircle(ALERT_CX, ALERT_CY, r, currentTheme.background);
+  }
+  alertRingPhase = (alertRingPhase + 2) % span;
+  for (int k = 0; k < n; k++) {
+    int r = ALERT_R0 + ((alertRingPhase + k * gap) % span);
+    tft.drawCircle(ALERT_CX, ALERT_CY, r, dimColor(alertRingCol, span - (r - ALERT_R0), span));
+  }
+}
+
 void displayEarthquakeAlert(EarthquakeData* quake) {
-  showingAlert = true;
+  showingAlert   = true;
   alertStartTime = millis();
+
+  uint16_t magColor = getMagnitudeColor(quake->magnitude);
+  alertRingCol   = magColor;
+  alertRingPhase = 0;
 
   tft.fillScreen(currentTheme.background);
 
-  uint16_t magColor = getMagnitudeColor(quake->magnitude);
-
-  // ── Header with warning triangles ──
-  tft.setFreeFont(FONT_LABEL);
+  // ── Header — big + magnitude-coloured so it reads as an EVENT, not the calm main view ──
+  tft.setFreeFont(FONT_MAG);
   tft.setTextColor(magColor);
-  int htw = tft.textWidth("EQ DETECTED");
-  int htx = 160 - htw / 2;
-  tft.setCursor(htx, 17);
-  tft.print("EQ DETECTED");
-  tft.fillTriangle(htx - 16, 20, htx - 10, 6, htx - 4, 20, magColor);
-  tft.fillTriangle(160 + htw / 2 + 4, 20, 160 + htw / 2 + 10, 6, 160 + htw / 2 + 16, 20, magColor);
+  const char* hdr = "ACTIVITY DETECTED";
+  int hw = tft.textWidth(hdr);
+  tft.setCursor(160 - hw / 2, 30);
+  tft.print(hdr);
+  tft.drawFastHLine(160 - hw / 2, 38, hw, dimColor(magColor, 1, 2));
 
-  // Thin divider
-  tft.drawFastHLine(5, 28, 310, currentTheme.divider);
-
-  // ── Radar / Target Reticle ──
-  int cx = 160;
-  int cy = 108;
-
-  // Ring count scales with magnitude
-  int ringCount = 2;
-  if (quake->magnitude >= 5.0) ringCount = 3;
-  if (quake->magnitude >= 7.0) ringCount = 4;
-
-  int radii[] = {20, 38, 56, 72};
-  int outerR = radii[ringCount - 1];
-
-  // Crosshair lines (behind rings)
-  tft.drawFastHLine(cx - outerR - 12, cy, (outerR + 12) * 2, currentTheme.divider);
-  tft.drawFastVLine(cx, cy - outerR - 12, (outerR + 12) * 2, currentTheme.divider);
-
-  // Concentric distance rings
-  for (int r = 0; r < ringCount; r++) {
-    tft.drawCircle(cx, cy, radii[r], currentTheme.border);
-  }
-
-  // 45-degree radial tick marks
-  float diag = 0.7071f;
-  for (int sx = -1; sx <= 1; sx += 2) {
-    for (int sy = -1; sy <= 1; sy += 2) {
-      int x1 = cx + (int)(diag * (outerR - 6) * sx);
-      int y1 = cy + (int)(diag * (outerR - 6) * sy);
-      int x2 = cx + (int)(diag * (outerR + 6) * sx);
-      int y2 = cy + (int)(diag * (outerR + 6) * sy);
-      tft.drawLine(x1, y1, x2, y2, currentTheme.divider);
-    }
-  }
-
-  // Epicentre dot at center
-  tft.fillCircle(cx, cy, 4, magColor);
-
-  // Magnitude text overlaid on reticle
-  char magStr[10];
-  snprintf(magStr, sizeof(magStr), "M%.1f", quake->magnitude);
-  int tw = tft.textWidth(magStr, 4);
-  tft.fillRect(cx - tw / 2 - 3, cy - 14, tw + 6, 28, currentTheme.background);
+  // ── Magnitude — the hero, sitting inside the ring band ──
+  char magStr[10]; snprintf(magStr, sizeof(magStr), "M%.1f", quake->magnitude);
+  tft.setFreeFont(FONT_MAG);
   tft.setTextColor(magColor);
-  tft.drawCentreString(magStr, cx, cy - 13, 4);
+  int mw = tft.textWidth(magStr);
+  tft.setCursor(ALERT_CX - mw / 2, ALERT_CY + 6);
+  tft.print(magStr);
 
-  // ── Data below reticle ──
-  int dataY = cy + outerR + 16;
-
-  // Location (demacron, truncate if too wide, centred)
+  // ── Where (auto-shrunk to fit the full width, macron bars kept) ──
   tft.setFreeFont(FONT_LABEL);
   tft.setTextColor(currentTheme.textPrimary);
   char locBuf[80]; bool locMac[80];
   int locLen = demacron(quake->location, locBuf, locMac, sizeof(locBuf));
-  while (locLen > 3 && tft.textWidth(locBuf) > 300) locBuf[--locLen] = '\0';
-  int locX = 160 - tft.textWidth(locBuf) / 2, locBaseY = dataY + 11;
+  if (tft.textWidth(locBuf) > 300) { tft.setFreeFont(&SeisSans10); }   // one gentle step down, like the cells
+  if (tft.textWidth(locBuf) > 300) { tft.setFreeFont(&SeisSans8);  }
+  while (locLen > 3 && tft.textWidth(locBuf) > 306) locBuf[--locLen] = '\0';
+  int locX = 160 - tft.textWidth(locBuf) / 2, locBaseY = 214;
   tft.setCursor(locX, locBaseY);
   tft.print(locBuf);
   for (int k = 0; k < locLen; k++) {
@@ -2908,12 +2906,14 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
     tft.drawFastHLine(vx + 1, locBaseY - (upper ? 15 : 12), (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
   }
 
-  // Depth
-  char depthBuf[32];
-  snprintf(depthBuf, sizeof(depthBuf), "Depth: %.0fkm", quake->depth);
+  // ── It's happening NOW (that's the whole point of this screen) ──
+  char meta[40]; snprintf(meta, sizeof(meta), "NOW  ·  %dKM DEEP", (int)quake->depth);
+  tft.setTextFont(1);
   tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(160 - tft.textWidth(depthBuf) / 2, dataY + 26);
-  tft.print(depthBuf);
+  tft.setCursor(160 - tft.textWidth(meta) / 2, 230);
+  tft.print(meta);
+
+  animateAlertRings();                        // first frame; loop() keeps them travelling
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3199,6 +3199,8 @@ void handleButton() {
         Serial.println("  -> OPEN picker");
         drawRegionPicker();                                           // gear (top-right) → settings
         releasedSinceOpen = false;                                    // require a lift before any action
+      } else if (sx < 115 && sy > 190 && latestQuake.isValid) {
+        displayEarthquakeAlert(&latestQuake);                         // tap the seismograph → preview the alert
       } else {
         requestFetch();                                              // elsewhere → refresh data (background)
       }
