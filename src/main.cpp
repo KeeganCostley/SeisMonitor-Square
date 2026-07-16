@@ -32,6 +32,10 @@
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <Free_Fonts.h>   // Adafruit GFX sans-serif — much cleaner than built-in bitmap
+// Custom intermediate sizes (generated: Arial rasterised into the GFX font format) so place names
+// step down GENTLY instead of falling off a cliff from 9pt straight to the tiny built-in font.
+#include "SeisSans10.h"   // cap 10 (vs 9pt's 12)
+#include "SeisSans8.h"    // cap ~8
 #include <FS.h>
 #include <time.h>
 using namespace fs;
@@ -639,7 +643,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.0-dualcore", 8, 228, 1);
+    tft.drawString("v7.1-fontladder", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1353,20 +1357,32 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   int len = demacron(text, a, mc, sizeof(a));
   tft.setTextColor(currentTheme.textPrimary);
 
-  // Font choice: keep the readable FreeSans9pt for the common 2-3 line names (Font 1 is too small a
-  // drop); only a genuinely huge name (needs > maxH/14 lines) falls back to Font 1. Long names get
-  // room instead via tighter line spacing + the top padding below, not by shrinking the glyphs.
-  tft.setFreeFont(FONT_LABEL);
-  bool ov; wrapMeasure(a, len, maxW, maxH / 14, ov);
-  bool small = ov;
-  int lineH, cursOff;
-  if (small) { tft.setTextFont(1); lineH = 10; cursOff = 1; }   // Font 1 cursor is top-left
-  else       { lineH = 14; cursOff = 11; }                      // FreeFont cursor is the baseline
+  // FONT LADDER — step down gently, never off a cliff. Walk from the biggest size to the smallest and
+  // take the FIRST one whose whole name fits the box; only a monster name reaches the last rung. The
+  // custom sizes are proportional + smooth (same rasterised style as 9pt), not the blocky built-in.
+  struct FontStep { const GFXfont* f; int lineH; int cursOff; int macUp; int macLo; };
+  static const FontStep LADDER[] = {
+    { FONT_LABEL,   14, 11, 15, 12 },   // FreeSans9pt — cap 12 (preferred)
+    { &SeisSans10,  12, 10, 13, 10 },   // custom      — cap 10
+    { &SeisSans8,   10,  8, 10,  8 },   // custom      — cap ~8 (last resort)
+  };
+  const int LADDER_N = 3;
+  int step = LADDER_N - 1;                                     // default: smallest
+  for (int i = 0; i < LADDER_N; i++) {
+    tft.setFreeFont(LADDER[i].f);
+    bool ovi; wrapMeasure(a, len, maxW, maxH / LADDER[i].lineH, ovi);
+    if (!ovi) { step = i; break; }                             // first size that fits wins
+  }
+  tft.setFreeFont(LADDER[step].f);
+  int lineH = LADDER[step].lineH, cursOff = LADDER[step].cursOff;
+  bool small = (step > 0);
   int maxLines = maxH / lineH; if (maxLines < 1) maxLines = 1;
 
   // Count lines, then centre the block AND (for short names) spread the lines to use more of the
   // cell — a 2-line name breathes instead of sitting as a tight little block jammed together.
   bool ov2; int nLines = wrapMeasure(a, len, maxW, maxLines, ov2);
+  Serial.printf("[place] [%s] maxW=%d maxH=%d step=%d lineH=%d nLines=%d\n",
+                a, maxW, maxH, step, lineH, nLines);
   int stepH = lineH, fill = maxH / nLines;
   if (fill > lineH + 3) stepH = min(lineH + 4, fill); // spread only short names (real spare height); a full
                                                       // 3-line name stays tight so it fits with a gap, not filling
@@ -1413,7 +1429,7 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
       char ch[2] = { a[pos + k], '\0' };
       int vw = tft.textWidth(ch);
       bool upper = (a[pos + k] >= 'A' && a[pos + k] <= 'Z');
-      int barY = small ? (lineY - 1) : (lineY - (upper ? 15 : 12));
+      int barY = lineY - (upper ? LADDER[step].macUp : LADDER[step].macLo);   // macron bar scales with the size
       tft.drawFastHLine(vx + 1, barY, (vw > 3) ? vw - 2 : vw, currentTheme.textPrimary);
     }
     lines++;
