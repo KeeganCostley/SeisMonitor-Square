@@ -879,8 +879,14 @@ void loop() {
     Serial.printf("[data] region=%s valid=%d mag=%.1f latest_ts=%lu age=%lds loc=[%s]\n",
                   config.region, (int)latestQuake.isValid, latestQuake.magnitude, latestQuake.timestamp,
                   (long)time(nullptr) - (long)latestQuake.timestamp, latestQuake.location);
-    if (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
-        highestRegionalQuake.timestamp != hT || highestRegionalQuake.magnitude != hM) {
+    // NOT while an alert is up: processQuakes() may have just raised one (same iteration — the
+    // showingAlert check at the top of loop() already ran), and these two repaint the DATA + MAP
+    // panels straight over it, leaving the alert showing only in the gaps with its rings still
+    // radiating across the main screen. The alert's own expiry calls drawUI(), which redraws
+    // everything with this fresh data anyway.
+    if (!showingAlert &&
+        (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
+         highestRegionalQuake.timestamp != hT || highestRegionalQuake.magnitude != hM)) {
       updateDataRegion();
       updateMapEarthquakeMarkers();
     }
