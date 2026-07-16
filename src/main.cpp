@@ -1253,14 +1253,14 @@ void abbreviatePlace(const char* in, char* out, int maxOut) {
   s.replace(" north-west of ", " NW of "); s.replace(" north-east of ", " NE of ");
   s.replace(" south-west of ", " SW of "); s.replace(" south-east of ", " SE of ");
   // USGS uses compass codes ("12km SSW of ..."). Collapse the wordy 3-letter intercardinals to the
-  // nearest diagonal (SSW->SW), then spell out lone cardinals (N->north). Order matters: 3-letter
-  // first, then 1-letter. The 2-letter diagonals (NE/NW/SE/SW) pass through unchanged.
+  // nearest diagonal (SSW->SW). Lone cardinals are ABBREVIATED (north->N) for room + consistency —
+  // GeoNet spells them out, USGS already sends "N". Order: 3-letter first, then the words.
   s.replace(" NNE of ", " NE of "); s.replace(" ENE of ", " NE of ");
   s.replace(" ESE of ", " SE of "); s.replace(" SSE of ", " SE of ");
   s.replace(" SSW of ", " SW of "); s.replace(" WSW of ", " SW of ");
   s.replace(" WNW of ", " NW of "); s.replace(" NNW of ", " NW of ");
-  s.replace(" N of ", " north of "); s.replace(" S of ", " south of ");
-  s.replace(" E of ", " east of ");  s.replace(" W of ", " west of ");
+  s.replace(" north of ", " N of "); s.replace(" south of ", " S of ");   // GeoNet words -> letters
+  s.replace(" east of ",  " E of "); s.replace(" west of ",  " W of ");
   // Global view: the country matters more than the distance from a small town, and
   // long "City, Country" names truncate — so drop the leading "<dist>km <dir> of ".
   if (strcmp(config.region, "Global") == 0) {
