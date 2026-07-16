@@ -275,6 +275,14 @@ const float   GLOBE_R          = 74.0f;   // inset from the panel edges (was 92,
 
 String lastQuakeID = "";
 
+// ── Dual-core fetch handoff: the background task (core 0) drops the raw feed text here and raises
+//    g_payloadReady; the UI loop (core 1) parses/reacts and clears it. So the blocking network fetch
+//    never freezes the seismograph / clock / touch. ──
+volatile bool g_payloadReady = false;   // task -> loop: a fresh payload is waiting
+volatile bool g_fetchNow     = false;   // loop -> task: fetch immediately (region change / manual refresh)
+String        g_payload;                // raw feed text (written by task, read by loop when ready)
+char          g_payloadRegion[16] = ""; // which region g_payload was fetched for
+
 // ── SEISMOGRAPH WAVE SIMULATION STATE ───────────────────────────────────────
 enum SeismoPhase { SEISMO_QUIET, SEISMO_P_WAVE, SEISMO_S_WAVE, SEISMO_SURFACE, SEISMO_CODA };
 SeismoPhase seismoPhase   = SEISMO_QUIET;
@@ -562,6 +570,9 @@ void drawCaliforniaMap();
 void drawGlobalMap();
 void animateSeismograph();
 void checkForEarthquakes();
+void processQuakes(String& payload, bool usingNZ);
+void requestFetch();
+void fetchTask(void* param);
 void displayEarthquakeAlert(EarthquakeData* quake);
 void drawRegionPicker();
 int  regionAtPoint(int16_t sx, int16_t sy);
@@ -628,7 +639,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v6.10", 8, 228, 1);
+    tft.drawString("v7.0-dualcore", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -741,13 +752,17 @@ void setup() {
   syncTimezone();   // NZ default + geo-IP auto-detect of the local offset
   setupWebServer();
 
-  drawLoadingScreen("FETCHING SEISMIC DATA", f2);   // hold the loader through the first fetch
+  drawLoadingScreen("FETCHING SEISMIC DATA", f2);   // hold the loader through the first (synchronous) fetch
   checkForEarthquakes();
   drawUI();
   playStartupRumble();
 
   lastActivity = millis();
   isRestMode = true;
+
+  // Hand ongoing fetches to a background task on core 0 so the blocking network call can never freeze
+  // the UI loop (core 1). It self-polls every API_POLL_INTERVAL and reacts to requestFetch().
+  xTaskCreatePinnedToCore(fetchTask, "fetch", 12288, NULL, 1, NULL, 0);
 
   Serial.println("Ready!\n");
 }
@@ -844,15 +859,18 @@ void loop() {
     lastGlobeFrame = now;
   }
 
-  if (now - lastAPICheck > API_POLL_INTERVAL) {
+  // Apply a payload the background task fetched (parse + react happen HERE, on the UI core). The task
+  // owns the 90s polling; the loop just consumes results, so the network never blocks the animation.
+  if (g_payloadReady) {
     unsigned long lT = latestQuake.timestamp, hT = highestRegionalQuake.timestamp;
     float         lM = latestQuake.magnitude, hM = highestRegionalQuake.magnitude;
-    checkForEarthquakes();
+    if (strcmp(g_payloadRegion, config.region) == 0)      // ignore a payload for a region we've since left
+      processQuakes(g_payload, isUsingNZAPI(config.region));
+    g_payload = String();                                 // free the buffer
+    g_payloadReady = false;                               // release the task to fetch again
     Serial.printf("[data] region=%s valid=%d mag=%.1f latest_ts=%lu age=%lds loc=[%s]\n",
                   config.region, (int)latestQuake.isValid, latestQuake.magnitude, latestQuake.timestamp,
                   (long)time(nullptr) - (long)latestQuake.timestamp, latestQuake.location);
-    // Repaint BOTH the data block and the map when a poll changes the latest/highest
-    // quake — otherwise the map (repainted by the pulse) and the cells drift out of sync.
     if (latestQuake.timestamp != lT || latestQuake.magnitude != lM ||
         highestRegionalQuake.timestamp != hT || highestRegionalQuake.magnitude != hM) {
       updateDataRegion();
@@ -2540,27 +2558,25 @@ void drawGlobalMap() {
 // EARTHQUAKE DATA FETCHING
 // ═══════════════════════════════════════════════════════════════════════════
 
-void checkForEarthquakes() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  
+// ── Network-only: fetch the raw feed payload. This is the ONLY blocking part, so it runs on the
+//    background core (fetchTask) — a slow/stalled fetch can never freeze the UI loop. ──
+String fetchPayload(const char* apiURL) {
+  if (WiFi.status() != WL_CONNECTED) return String();
   HTTPClient http;
-  const char* apiURL = getAPIEndpoint(config.region);
-  bool usingNZ = isUsingNZAPI(config.region);
-  
   http.begin(apiURL);
   http.setTimeout(HTTP_TIMEOUT);
-  
   int httpCode = http.GET();
   Serial.printf("[fetch] HTTP %d  heap=%u  %s\n", httpCode, ESP.getFreeHeap(), apiURL);
-  if (httpCode != 200) {
-    http.end();
-    return;
-  }
-
+  if (httpCode != 200) { http.end(); return String(); }
   String payload = http.getString();
   http.end();
   Serial.printf("[fetch] payload=%u bytes  heap=%u\n", (unsigned)payload.length(), ESP.getFreeHeap());
-  
+  return payload;
+}
+
+// ── Parse the payload, update the quake data, and react (seismo trigger / alert / redraw). Runs on
+//    the UI core, so all the TFT/seismo touches here are safe. ──
+void processQuakes(String& payload, bool usingNZ) {
   // For USGS feeds, use streaming parser with filter to reduce memory
   DynamicJsonDocument filter(200);
   filter["features"][0]["geometry"]["coordinates"] = true;
@@ -2754,6 +2770,33 @@ void checkForEarthquakes() {
       }
       
       lastActivity = millis();
+    }
+  }
+}
+
+void checkForEarthquakes() {            // synchronous fetch + process — used once at boot
+  String p = fetchPayload(getAPIEndpoint(config.region));
+  if (p.length()) processQuakes(p, isUsingNZAPI(config.region));
+}
+
+void requestFetch() { g_fetchNow = true; }   // ask the background fetch task to run now
+
+// Background fetch task (pinned to core 0). Only touches the network + g_payload* — never the TFT/
+// seismo — so a slow or stalled fetch can't freeze the UI loop on core 1.
+void fetchTask(void*) {
+  for (;;) {
+    unsigned long waitStart = millis();
+    while (!g_fetchNow && (millis() - waitStart < API_POLL_INTERVAL)) vTaskDelay(pdMS_TO_TICKS(50));
+    g_fetchNow = false;
+    while (g_payloadReady) vTaskDelay(pdMS_TO_TICKS(20));      // wait until the loop consumes the last one
+    char region[16];
+    strncpy(region, config.region, sizeof(region) - 1); region[sizeof(region) - 1] = '\0';
+    String p = fetchPayload(getAPIEndpoint(region));
+    if (p.length()) {
+      g_payload = p;
+      strncpy(g_payloadRegion, region, sizeof(g_payloadRegion) - 1);
+      g_payloadRegion[sizeof(g_payloadRegion) - 1] = '\0';
+      g_payloadReady = true;
     }
   }
 }
@@ -3043,11 +3086,8 @@ void selectRegion(int idx) {
   highestRegionalQuake.clear();
   recentQuakeCount = 0;
 
-  drawUI();                         // immediate redraw (new map) confirms the choice
-  checkForEarthquakes();            // then pull the new region's quakes
-  updateDataRegion();
-  updateMapEarthquakeMarkers();
-  lastAPICheck = millis();
+  drawUI();                         // immediate redraw (new map + cleared cells) confirms the choice
+  requestFetch();                   // pull the new region's quakes in the background; the loop applies them
   lastActivity = millis();
 }
 
@@ -3144,10 +3184,7 @@ void handleButton() {
         drawRegionPicker();                                           // gear (top-right) → settings
         releasedSinceOpen = false;                                    // require a lift before any action
       } else {
-        checkForEarthquakes();                                        // elsewhere → refresh data
-        updateDataRegion();
-        updateMapEarthquakeMarkers();
-        lastAPICheck = now;
+        requestFetch();                                              // elsewhere → refresh data (background)
       }
     }
   } else if (now - lastSeen > 300) {                                  // finger confirmed UP for 300ms
@@ -3163,7 +3200,7 @@ void handleButton() {
     if (bootLowSince == 0) bootLowSince = now;
     if (now - bootLowSince > 80 && now - lastButtonPress > DEBOUNCE_DELAY && !showingRegionPicker) {
       lastButtonPress = now; lastActivity = now; isRestMode = false;
-      checkForEarthquakes(); updateDataRegion(); updateMapEarthquakeMarkers(); lastAPICheck = now;
+      requestFetch();                                            // background refresh
     }
   } else {
     bootLowSince = 0;
