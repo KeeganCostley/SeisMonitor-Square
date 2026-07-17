@@ -1347,15 +1347,24 @@ static bool connectorAfter(const char* a, int sp, int len) {
   return (a[j] == 'o' && a[j + 1] == 'f') || (a[j] == 'd' && a[j + 1] == 'e');
 }
 
-// Optical left-alignment: glyphs whose visual mass sits inset (T/V/W/Y, and A/J to a lesser degree)
-// look indented when flush-left under a straight-stem glyph or a digit — even though the string
-// starts at the same x. Nudge them a hair toward the margin so wrapped lines line up to the eye.
-static int opticalLeftNudge(char c) {
-  switch (c) {
-    case 'T': case 'V': case 'W': case 'Y': return 2;
-    case 'A': case 'J': return 1;
-    default: return 0;
-  }
+// Left side bearing: the blank columns the GFX format bakes into a glyph BEFORE its ink. It differs
+// per character, so setting the cursor to x does NOT put every line's ink at x — it indents some and
+// not others. Worst offender is '1': digits are tabular (every digit advances 10px in FreeSans9pt) so
+// the narrow 1 is centred inside that slot and carries a 3px bearing, against 1px for '3' and 0 for
+// 'W'. A line reading "10km E of ..." therefore looks like it starts with a space, which is exactly
+// what it looks like. Subtracting the bearing lands every line's ink flush on the margin.
+//
+// This replaced a hand-guessed nudge table (T/V/W/Y -> 2px, A/J -> 1px) that knew nothing about
+// digits and, stacked on top of the real bearings, spread line starts across x-2 .. x+3. Read the
+// metric out of the font instead of guessing at it.
+static int glyphLeftBearing(const GFXfont* f, char c) {
+  if (!f || c == '\0') return 0;
+  uint8_t u = (uint8_t)c;
+  uint8_t first = pgm_read_byte(&f->first), last = pgm_read_byte(&f->last);
+  if (u < first || u > last) return 0;
+  GFXglyph* g = &(((GFXglyph*)pgm_read_dword(&f->glyph))[u - first]);
+  if (pgm_read_byte(&g->width) == 0) return 0;          // blank glyph (space) — no ink to align
+  return (int8_t)pgm_read_byte(&g->xOffset);
 }
 
 // Place name fitted into a box (x,y; width maxW, height maxH). Picks the largest font whose FULL wrap
@@ -1422,13 +1431,13 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
         pl--;
       }
       char outl[92]; snprintf(outl, sizeof(outl), "%.*s...", pl, a + pos);
-      tft.setCursor(x - opticalLeftNudge(outl[0]), lineY); tft.print(outl);
+      tft.setCursor(x - glyphLeftBearing(LADDER[step].f, outl[0]), lineY); tft.print(outl);
       break;
     }
 
     strncpy(line, a + pos, pl); line[pl] = '\0';
     while (pl > 0 && line[pl - 1] == ' ') line[--pl] = '\0';
-    int lx = x - opticalLeftNudge(line[0]);           // optical margin: pull T/V/W/Y/A/J toward the edge
+    int lx = x - glyphLeftBearing(LADDER[step].f, line[0]);   // land the INK on the margin, not the cursor
     tft.setCursor(lx, lineY);
     tft.print(line);
 
