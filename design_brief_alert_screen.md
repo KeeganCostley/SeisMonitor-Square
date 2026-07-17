@@ -1,4 +1,4 @@
-# Design Brief — SeisMonitor Screen 5: the Alert ("ACTIVITY DETECTED")
+# Design Brief — SeisMonitor Screen 5: the Alert ("SEISMIC ACTIVITY DETECTED")
 
 **This is a brief _for_ Claude Design, not a spec _from_ it.** It's the companion to the existing
 `design_handoff_landscape_ui/` bundle, which designed Screens 1–4 (NZ monitor, Global globe, Settings,
@@ -35,9 +35,9 @@ So it has to work across a huge range without crying wolf:
 - **M5.5** — genuinely notable. Should command attention.
 - **M7.1** — rare and serious. Should be unmistakable.
 
-That's why the header reads **"ACTIVITY DETECTED"** and not "EARTHQUAKE" or "ALERT". Keep that wording —
-it's deliberate and the owner asked for it specifically. **Severity is carried by colour** (see §6), not
-by shouting.
+That's why the header reads **"SEISMIC ACTIVITY DETECTED"** and not "EARTHQUAKE" or "ALERT". Keep that
+wording exactly — it's deliberate and the owner specified it. **Severity is carried by colour** (see §7),
+not by shouting.
 
 ---
 
@@ -51,7 +51,7 @@ Unpacking that into requirements:
 | Requirement | Meaning |
 |---|---|
 | **"more distinct than the main screen"** | This is the brief's core. It must not read as a quieter variant of the monitor. Different structure, different rhythm. The monitor is a calm three-panel instrument; this is a **single event, full-bleed**. |
-| **"should say activity detected"** | Fixed copy: `ACTIVITY DETECTED`. |
+| **"should say activity detected"** | Fixed copy: **`SEISMIC ACTIVITY DETECTED`** (confirmed by the owner as the final wording). 25 characters — **see the width warning in §5.2, this string does not fit the screen at large sizes.** |
 | **"just have the latest data"** | **One** quake only. No 24H HIGH, no map, no seismograph, no panels. Resist the urge to add. |
 | **"but showing NOW"** | Framed as *happening*, not logged. No "12M AGO" timestamp — this is the live moment. Currently rendered as `NOW · 29KM DEEP`; better ideas welcome. |
 | **"with the concentric activity rings"** | Rings radiating outward, animated. Non-negotiable — it's the owner's central image for the screen. Make them the hero, not decoration. |
@@ -62,15 +62,18 @@ Unpacking that into requirements:
 
 Current firmware (`displayEarthquakeAlert()`, `src/main.cpp` ~line 2861):
 
-- `ACTIVITY DETECTED` in FreeSansBold12pt, magnitude-coloured, centred at y=30, with an underline.
-- `M3.7` in the same 12pt font, centred at (160, 130).
+- `SEISMIC ACTIVITY DETECTED` in FreeSansBold9pt + 1px tracking, magnitude-coloured, centred at y=30,
+  with an underline. (It's at 9pt and not the larger 12pt purely because it *doesn't fit* — see §5.2.)
+- `M3.7` in FreeSansBold12pt, centred at (160, 130).
 - Place name centred at y=214.
 - `NOW · 29KM DEEP` in the tiny built-in font at y=230.
 - 3 concentric rings animating outward between **r=36 and r=80** around (160, 124).
 
 **Why it fails:**
-1. **The magnitude and the header are the same size.** Nothing is the hero. It reads as a flat list.
-2. **It's centred stack + centred stack + centred stack.** No structure, no tension, no hierarchy.
+1. **It's centred stack + centred stack + centred stack.** No structure, no tension, no hierarchy —
+   just four things stacked down the middle of the screen.
+2. **The magnitude is only 17px tall.** It's the hero by default rather than by design, and it isn't
+   remotely big enough to carry the screen. (Reminder from §5.2: we can generate a font at *any* size.)
 3. **The rings are trapped in a 44px-wide band** (r=36→80) because that's the only region that doesn't
    collide with text — see the erase problem in §5.4. They read as a spinning progress ring, not a shockwave.
 4. Everything is the same magnitude-tinted colour, so the colour carries no information.
@@ -117,8 +120,25 @@ of flash each, and we have room). So:
 > large magnitude is probably the single easiest way to make this screen distinct from the main one.
 
 Caveats: **ASCII only** (place names are already romanised); Māori macrons are drawn as a separate 1px bar
-above the vowel, so a macron needs ~3px of clear space above the cap height. No italics, no real letter-spacing
-(we can only insert whole pixels between glyphs, which we already do for header text).
+above the vowel, so a macron needs ~3px of clear space above the cap height. No italics. Letter-spacing is
+whole-pixel only (we insert N px between glyphs — fine, we already do it, but it can't be fractional).
+
+**⚠️ The header string is the tight one.** `SEISMIC ACTIVITY DETECTED` is 25 characters. Measured exactly
+against the real glyph tables, on a **320px-wide** screen:
+
+| Font | Width of the header string | |
+|---|---|---|
+| FreeSansBold12pt (cap 17) | **352px** | **does not fit — over by 32px** |
+| FreeSansBold9pt (cap 12) | 272px | fits, 48px spare ← *what firmware uses today* |
+| FreeSans9pt (cap 12) | 258px | fits |
+| SeisSans10 (cap 10) | 203px | fits easily |
+
+So **a large single-line header is not physically possible.** Your options, all fine by us:
+- keep it small and quiet (current approach — lets the magnitude be the hero);
+- **break it across two lines** — `SEISMIC ACTIVITY` / `DETECTED` measures 216px / 129px at the big 12pt,
+  so a large stacked header *does* fit (but note it would then collide with the ring band — see §5.4);
+- something else entirely. Just **be explicit about the intended size and line breaks**, and we'll generate
+  the font to match.
 
 ### 5.3 Drawing primitives available
 Cheap and available:

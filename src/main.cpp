@@ -644,7 +644,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.1-fontladder", 8, 228, 1);
+    tft.drawString("v7.2-alert", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2874,13 +2874,23 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
 
   tft.fillScreen(currentTheme.background);
 
-  // ── Header — big + magnitude-coloured so it reads as an EVENT, not the calm main view ──
-  tft.setFreeFont(FONT_MAG);
+  // ── Header — magnitude-coloured so it reads as an EVENT, not the calm main view ──
+  // "SEISMIC ACTIVITY DETECTED" measures 352px at FONT_MAG — it cannot fit a 320px screen on one
+  // line. It steps down to the bold 9pt (272px) and takes 1px of tracking instead, which is the
+  // better hierarchy anyway: the magnitude below is now clearly the biggest thing on the screen,
+  // and the tracking makes this read as a header rather than as body text.
+  tft.setFreeFont(FONT_DATA);
   tft.setTextColor(magColor);
-  const char* hdr = "ACTIVITY DETECTED";
-  int hw = tft.textWidth(hdr);
-  tft.setCursor(160 - hw / 2, 30);
-  tft.print(hdr);
+  const char* hdr = "SEISMIC ACTIVITY DETECTED";
+  const int HDR_TRACK = 1;
+  int hw = tft.textWidth(hdr) + HDR_TRACK * (int)(strlen(hdr) - 1);
+  int hx = 160 - hw / 2;
+  for (const char* p = hdr; *p; p++) {
+    char ch[2] = { *p, '\0' };
+    tft.setCursor(hx, 30);
+    tft.print(ch);
+    hx += tft.textWidth(ch) + HDR_TRACK;
+  }
   tft.drawFastHLine(160 - hw / 2, 38, hw, dimColor(magColor, 1, 2));
 
   // ── Magnitude — the hero, sitting inside the ring band ──
