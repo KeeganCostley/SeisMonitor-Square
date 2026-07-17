@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SeisMonitor — Landscape UI (handoff)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #f0eee9; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="screens/sm-common.jsx"></script>
+<script type="text/babel" src="screens/sm-land-rings.jsx"></script>
+<script type="text/babel" src="screens/sm-land-globe.jsx"></script>
+<script type="text/babel" src="screens/sm-land-settings.jsx"></script>
+<script type="text/babel" src="screens/sm-land-loading.jsx"></script>
+
+<script type="text/babel">
+// Landscape device bezel — 320×240 inner panel (ES3C28P rotated).
+function BezelL({ children }) {
+  return (
+    <div style={{
+      width: 320 + 24, height: 240 + 24,
+      background: 'linear-gradient(145deg, #23262c, #0e1116)',
+      padding: 12, borderRadius: 8,
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 4px rgba(0,0,0,0.2)',
+      position: 'relative',
+    }}>
+      <div style={{ width: 320, height: 240, overflow: 'hidden', boxShadow: '0 0 0 1px #000' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const LBW = 320 + 24;
+const LBH = 240 + 24;
+
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="monitor" title="Main monitor (320×240)" subtitle="Data left · big map/globe right · seismo reeled into lower-left">
+        <DCArtboard id="land-rings" label="NZ · Rings + soft HUD" width={LBW} height={LBH}><BezelL><LandRingsFrame /></BezelL></DCArtboard>
+        <DCArtboard id="land-globe" label="Global · wireframe globe" width={LBW} height={LBH}><BezelL><LandGlobeFrame /></BezelL></DCArtboard>
+      </DCSection>
+
+      <DCSection id="system" title="System screens" subtitle="Settings (region + WiFi) · Loading / boot states">
+        <DCArtboard id="land-settings" label="Settings · region + WiFi" width={LBW} height={LBH}><BezelL><LandSettingsFrame /></BezelL></DCArtboard>
+        <DCArtboard id="land-loading" label="Loading · connecting" width={LBW} height={LBH}><BezelL><LandLoadingFrame stage="wifi" /></BezelL></DCArtboard>
+        <DCArtboard id="land-loading2" label="Loading · syncing data" width={LBW} height={LBH}><BezelL><LandLoadingFrame stage="sync" /></BezelL></DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
