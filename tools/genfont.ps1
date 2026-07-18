@@ -2,11 +2,14 @@ param(
   [string]$FontName = "Arial",
   [int]$EmPx       = 14,      # em size in pixels
   [string]$VarName = "SeisSans10",
-  [string]$OutFile = "out.h"
-)
+  [string]$OutFile = "out.h",
+  [switch]$Bold,             # generate the bold weight
+  [int]$First      = 32,     # first ASCII code to include (0x20 = space)
+  [int]$Last       = 126     # last  ASCII code to include (0x7E = ~). Narrow this for big fonts:
+)                            #   e.g. -First 46 -Last 77 covers '.' '/' 0-9 and A-M ('M' for magnitude)
 Add-Type -AssemblyName System.Drawing
 
-$style  = [System.Drawing.FontStyle]::Regular
+$style  = $Bold ? [System.Drawing.FontStyle]::Bold : [System.Drawing.FontStyle]::Regular
 $family = New-Object System.Drawing.FontFamily($FontName)
 $font   = New-Object System.Drawing.Font($family, $EmPx, $style, [System.Drawing.GraphicsUnit]::Pixel)
 
@@ -27,7 +30,7 @@ $fmt.FormatFlags = $fmt.FormatFlags -bor [System.Drawing.StringFormatFlags]::Mea
 $bytes  = New-Object System.Collections.Generic.List[int]
 $glyphs = @()
 
-for ($c = 32; $c -le 126; $c++) {
+for ($c = $First; $c -le $Last; $c++) {
   $ch = [char]$c
   $bmp = New-Object System.Drawing.Bitmap($W, $H)
   $g   = [System.Drawing.Graphics]::FromImage($bmp)
@@ -83,7 +86,8 @@ $font.Dispose()
 
 # ---- emit header ----
 $sb = New-Object System.Text.StringBuilder
-[void]$sb.AppendLine("// Generated: $FontName @ ${EmPx}px em  (ascent=$ascentPx yAdvance=$yAdvance)")
+$weightStr = $Bold ? "Bold" : "Regular"
+[void]$sb.AppendLine(("// Generated: $FontName $weightStr @ ${EmPx}px em  (ascent=$ascentPx yAdvance=$yAdvance, chars 0x{0:X2}-0x{1:X2})" -f $First, $Last))
 [void]$sb.AppendLine("const uint8_t ${VarName}Bitmaps[] PROGMEM = {")
 $line = "  "
 for ($i = 0; $i -lt $bytes.Count; $i++) {
@@ -96,7 +100,7 @@ if ($line.Trim().Length) { [void]$sb.AppendLine($line.TrimEnd()) }
 [void]$sb.AppendLine("const GFXglyph ${VarName}Glyphs[] PROGMEM = {")
 for ($i = 0; $i -lt $glyphs.Count; $i++) {
   $gl = $glyphs[$i]
-  $cc = $i + 32
+  $cc = $i + $First
   $disp = if ($cc -eq 32) { "' '" } else { "'" + [char]$cc + "'" }
   [void]$sb.AppendLine(("  {{ {0,5}, {1,3}, {2,3}, {3,3}, {4,4}, {5,4} }},   // 0x{6:X2} {7}" -f $gl[0],$gl[1],$gl[2],$gl[3],$gl[4],$gl[5],$cc,$disp))
 }
@@ -105,7 +109,7 @@ for ($i = 0; $i -lt $glyphs.Count; $i++) {
 [void]$sb.AppendLine("const GFXfont ${VarName} PROGMEM = {")
 [void]$sb.AppendLine("  (uint8_t  *)${VarName}Bitmaps,")
 [void]$sb.AppendLine("  (GFXglyph *)${VarName}Glyphs,")
-[void]$sb.AppendLine("  0x20, 0x7E, $yAdvance };")
+[void]$sb.AppendLine(("  0x{0:X2}, 0x{1:X2}, {2} }};" -f $First, $Last, $yAdvance))
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("// Approx. $($bytes.Count + $glyphs.Count * 7 + 7) bytes")
 
