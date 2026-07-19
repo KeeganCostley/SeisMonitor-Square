@@ -38,6 +38,7 @@
 #include "SeisSans8.h"    // cap ~8
 #include "SeisMag.h"      // Arial Bold ~58px — the alert-screen magnitude hero (only '.' 0-9 'M')
 #include "SeisPlace22.h"  // Arial Bold 22px — the alert-screen place name
+#include "SeisCoast.h"    // Natural Earth 1:110m coastlines for the globe (see tools/gencoast.py)
 #include <FS.h>
 #include <time.h>
 using namespace fs;
@@ -2494,17 +2495,6 @@ void globeProject(float lat, float lon, int cx, int cy, int& sx, int& sy, bool& 
 }
 
 template<class T>
-void globePolyT(T* g, const float pts[][2], int n, int cx, int cy, uint16_t bright, uint16_t dim) {
-  int px = 0, py = 0; bool pf = false, have = false;
-  for (int i = 0; i < n; i++) {
-    int sx, sy; bool front; globeProject(pts[i][0], pts[i][1], cx, cy, sx, sy, front);
-    if (have) { if (pf && front) g->drawLine(px, py, sx, sy, bright);
-                else if (!pf && !front) g->drawLine(px, py, sx, sy, dim); }
-    px = sx; py = sy; pf = front; have = true;
-  }
-}
-
-template<class T>
 void globeMarkerT(T* g, float lat, float lon, int cx, int cy, uint16_t col, float mag) {
   int sx, sy; bool front; globeProject(lat, lon, cx, cy, sx, sy, front);
   if (!front) return;                              // back face — hidden (the spin reveals it)
@@ -2553,30 +2543,21 @@ void renderGlobe(T* g, int cx, int cy) {
     }
   }
 
-  static const float na[][2] = {{71,-156},{68,-166},{60,-164},{56,-156},{59,-139},{54,-130},{48,-124},{42,-124},{34,-120},{32,-117},{27,-114},{23,-110},{21,-105},{18,-103},{16,-95},{19,-91},{18,-88},{14,-83},{9,-80},{14,-84},{20,-90},{25,-82},{27,-80},{30,-82},{35,-76},{40,-73},{44,-67},{47,-60},{52,-56},{55,-60},{60,-64},{63,-77},{67,-63},{70,-85},{73,-100},{72,-125},{71,-156}};
-  static const float sa[][2] = {{12,-72},{8,-77},{2,-80},{-4,-81},{-10,-78},{-16,-74},{-23,-70},{-31,-71},{-38,-73},{-44,-75},{-50,-74},{-54,-69},{-51,-68},{-46,-66},{-40,-62},{-37,-57},{-32,-52},{-25,-48},{-23,-43},{-15,-39},{-8,-35},{-3,-39},{0,-50},{5,-52},{8,-60},{11,-65},{12,-72}};
-  static const float af[][2] = {{37,10},{33,-6},{27,-13},{21,-17},{14,-17},{8,-13},{4,-7},{5,0},{6,4},{3,9},{-3,11},{-10,14},{-17,12},{-25,16},{-33,18},{-34,24},{-29,31},{-22,35},{-15,40},{-8,40},{-1,42},{6,49},{12,51},{12,44},{16,40},{22,38},{28,34},{31,31},{32,24},{33,18},{35,11},{37,10}};
-  static const float eu[][2] = {{43,-9},{37,-9},{36,-2},{40,3},{43,7},{44,12},{40,18},{38,16},{37,23},{41,29},{45,37},{41,41},{37,36},{31,32},{29,35},{25,37},{21,39},{17,42},{15,44},{20,57},{25,57},{23,68},{20,73},{14,80},{8,77},{10,80},{16,82},{21,87},{22,92},{16,95},{9,99},{14,109},{20,107},{22,114},{30,122},{37,122},{40,125},{43,131},{47,138},{52,141},{59,143},{60,154},{62,163},{66,170},{70,160},{72,140},{75,110},{78,95},{80,68},{75,55},{70,50},{66,42},{62,30},{66,22},{70,30},{68,38},{63,30},{59,23},{61,16},{57,8},{55,11},{52,3},{48,-4},{43,-9}};
-  static const float au[][2] = {{-12,131},{-11,137},{-14,142},{-19,147},{-25,153},{-32,153},{-38,147},{-38,141},{-35,138},{-32,134},{-34,123},{-32,116},{-26,114},{-20,117},{-15,124},{-12,131}};
-  static const float gr[][2] = {{83,-32},{80,-18},{73,-22},{67,-32},{60,-43},{64,-50},{72,-55},{78,-50},{82,-40},{83,-32}};
-  static const float mg[][2] = {{-12,49},{-16,50},{-22,48},{-25,45},{-22,43},{-16,44},{-12,49}};
-  static const float jp[][2] = {{45,142},{40,140},{35,139},{34,135},{36,137},{38,140},{41,141},{45,142}};
-  static const float br[][2] = {{58,-5},{54,-3},{51,1},{50,-5},{54,-6},{57,-7},{58,-5}};
-  static const float nz[][2] = {{-34,173},{-39,177},{-41,175},{-46,168},{-43,170},{-38,174},{-34,173}};
-  static const float id[][2] = {{5,95},{0,100},{-6,105},{-8,114},{-8,120},{-4,119},{1,110},{4,99},{5,95}};
-  #define NPTS(a) (int)(sizeof(a) / sizeof(a[0]))
-  globePolyT(g, na, NPTS(na), cx, cy, eqF,   0x0140);
-  globePolyT(g, sa, NPTS(sa), cx, cy, eqF,   0x0140);
-  globePolyT(g, af, NPTS(af), cx, cy, eqF,   0x0140);
-  globePolyT(g, eu, NPTS(eu), cx, cy, eqF,   0x0140);
-  globePolyT(g, au, NPTS(au), cx, cy, eqF,   0x0140);
-  globePolyT(g, gr, NPTS(gr), cx, cy, meshF, 0x0120);
-  globePolyT(g, mg, NPTS(mg), cx, cy, meshF, 0x0120);
-  globePolyT(g, jp, NPTS(jp), cx, cy, meshF, 0x0120);
-  globePolyT(g, br, NPTS(br), cx, cy, meshF, 0x0120);
-  globePolyT(g, nz, NPTS(nz), cx, cy, meshF, 0x0120);
-  globePolyT(g, id, NPTS(id), cx, cy, meshF, 0x0120);
-  #undef NPTS
+  // Coastlines — Natural Earth 1:110m (SeisCoast.h, from tools/gencoast.py). One flat {lat,lon} array;
+  // a {999,999} sentinel lifts the pen between features so separate landmasses don't get joined. Front
+  // arcs bright, back (far-side) arcs dim — same depth cue the graticule uses. Replaced the old ~225
+  // hand-plotted points (blocky continents, no Antarctica) with ~1225 real ones.
+  {
+    int px = 0, py = 0; bool pf = false, have = false;
+    for (int i = 0; i < GLOBE_COAST_N; i++) {
+      if (GLOBE_COAST[i][0] > 900.0f) { have = false; continue; }   // sentinel — pen up
+      int sx, sy; bool front;
+      globeProject(GLOBE_COAST[i][0], GLOBE_COAST[i][1], cx, cy, sx, sy, front);
+      if (have) { if (pf && front)        g->drawLine(px, py, sx, sy, eqF);
+                  else if (!pf && !front) g->drawLine(px, py, sx, sy, 0x0140); }
+      px = sx; py = sy; pf = front; have = true;
+    }
+  }
 
   g->drawCircle(cx, cy, (int)GLOBE_R, limb);
   g->drawCircle(cx, cy, (int)GLOBE_R - 1, limb);
