@@ -672,7 +672,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.6-align", 8, 228, 1);
+    tft.drawString("v7.7-calm", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2996,7 +2996,7 @@ static void drawAlertContent() {
 // inside the frame (setViewport, absolute coords) so they never paint over the border. Driven from
 // loop() every ~55ms.
 void animateAlertRings() {
-  uint16_t green = currentTheme.textAccent;
+  uint16_t ringCol = currentTheme.textSecondary;     // dim green — echoes the map's faint distance rings
   const int gap = ALERT_MAXR / ALERT_RING_N;
   tft.setViewport(ALERT_VP_X, ALERT_VP_Y, ALERT_VP_W, ALERT_VP_H, false);   // false = keep absolute coords
   for (int k = 0; k < ALERT_RING_N; k++) {           // erase where each ring was (both px of the 2px stroke)
@@ -3008,11 +3008,11 @@ void animateAlertRings() {
   for (int k = 0; k < ALERT_RING_N; k++) {           // redraw, brighter near the origin, fading outward
     int r = (alertRingPhase + k * gap) % ALERT_MAXR;
     if (r <= 1) continue;
-    uint16_t c = dimColor(green, ALERT_MAXR - r, ALERT_MAXR);
+    uint16_t c = dimColor(ringCol, ALERT_MAXR - r, ALERT_MAXR);
     tft.drawCircle(ALERT_OX, ALERT_OY, r, c);
     tft.drawCircle(ALERT_OX, ALERT_OY, r + 1, c);    // 2px stroke
   }
-  tft.fillCircle(ALERT_OX, ALERT_OY, 3, green);      // the epicentre core at the origin
+  tft.fillCircle(ALERT_OX, ALERT_OY, 2, currentTheme.textAccent);   // small brighter origin core (focal point)
   tft.resetViewport();
   drawAlertContent();                                // text always on top, crisp, over the full screen
 }
