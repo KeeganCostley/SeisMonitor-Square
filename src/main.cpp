@@ -672,7 +672,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.5-frame", 8, 228, 1);
+    tft.drawString("v7.6-align", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2869,12 +2869,11 @@ static int      alertRingPhase = 0;
 static uint16_t alertColor     = 0;          // severity colour — used ONLY for the magnitude number
 static EarthquakeData alertQuake;            // the one quake on screen — re-drawn on top of the rings each frame
 
-// Draw the green frame that ties the alert to the monitor's bordered panels (once, in displayEarthquakeAlert;
-// the rings are clipped inside it so they never touch it, and the text sits within it).
+// Draw the frame that ties the alert to the monitor's bordered panels — SAME green (PANEL_EDGE, the dim
+// soft green), SAME thin 1px line, SAME radius 3 as drawDataPanel/drawMap/drawSeismograph. (Was a bright
+// 2px double frame that read as a different product.) Drawn once; rings are clipped inside it.
 static void drawAlertFrame() {
-  uint16_t g = currentTheme.textAccent;
-  tft.drawRoundRect(4, 4, 312, 232, 7, g);
-  tft.drawRoundRect(5, 5, 310, 230, 6, g);
+  tft.drawRoundRect(4, 4, 312, 232, 3, PANEL_EDGE);
 }
 
 // Scale an RGB565 colour's brightness by num/den (fades the rings as they travel out).
@@ -2989,7 +2988,7 @@ static void drawAlertContent() {
     String ago = getTimeAgo(ts); ago.toUpperCase();
     snprintf(meta, sizeof(meta), "%s AGO - %dKM DEEP", ago.c_str(), (int)q->depth);
   }
-  alertText(meta, ALERT_RIGHT, 226, FONT_LABEL, green, 1);
+  alertText(meta, ALERT_RIGHT, 226, FONT_LABEL, currentTheme.textSecondary, 1);   // dim green, like the main meta
 }
 
 // One animation frame: erase the old ring arcs, step the phase out, redraw them fading as they go,
