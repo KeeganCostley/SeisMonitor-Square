@@ -672,7 +672,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.7-calm", 8, 228, 1);
+    tft.drawString("v7.8-type", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1395,6 +1395,23 @@ static int glyphLeftBearing(const GFXfont* f, char c) {
   return (int8_t)pgm_read_byte(&g->xOffset);
 }
 
+// Width of the widest single space-delimited word, measured in the CURRENT font. A word wider than the
+// box can only be rendered by chopping it mid-letter, so the size ladder uses this to step down instead.
+static int widestWordWidth(const char* a, int len) {
+  int widest = 0, start = 0;
+  for (int i = 0; i <= len; i++) {
+    if (i < len && a[i] != ' ') continue;
+    if (i > start) {
+      char w[80]; int n = i - start; if (n > 79) n = 79;
+      strncpy(w, a + start, n); w[n] = '\0';
+      int ww = tft.textWidth(w);
+      if (ww > widest) widest = ww;
+    }
+    start = i + 1;
+  }
+  return widest;
+}
+
 // Place name fitted into a box (x,y; width maxW, height maxH). Picks the largest font whose FULL wrap
 // fits — FreeSans9pt (lineH 14), else the compact built-in Font 1 (lineH 10) — so long "City, Country"
 // names fit instead of truncating. Centres the wrapped block vertically (a 2-line name sits mid-cell,
@@ -1418,7 +1435,11 @@ void drawPlaceNameFit(const char* text, int x, int y, int maxW, int maxH) {
   for (int i = 0; i < LADDER_N; i++) {
     tft.setFreeFont(LADDER[i].f);
     bool ovi; wrapMeasure(a, len, maxW, maxH / LADDER[i].lineH, ovi);
-    if (!ovi) { step = i; break; }                             // first size that fits wins
+    // A size only "fits" if the wrap succeeds AND every individual WORD fits on a line. Without the
+    // second test the wrapper reports success while chopping a word mid-letter — "Martinborough" is
+    // 116px against a 97px cell at 9pt, so it rendered as "Martinborou" / "gh". It's 93px at
+    // SeisSans10, so requiring the widest word to fit steps down to a size that keeps words whole.
+    if (!ovi && widestWordWidth(a, len) <= maxW) { step = i; break; }
   }
   tft.setFreeFont(LADDER[step].f);
   int lineH = LADDER[step].lineH, cursOff = LADDER[step].cursOff;
@@ -2891,18 +2912,25 @@ static uint16_t dimColor(uint16_t c, int num, int den) {
 // fillRect-then-redraw, which would blank the hero magnitude 18×/second). Rings pass behind: where a
 // ring crossed a glyph, this repaints it; ring specks left in the glyphs' negative space are cleared
 // by the erase step on the next frame. Text sits on the flat black fill from displayEarthquakeAlert.
-static void alertText(const char* s, int rightX, int baseY, const GFXfont* f, uint16_t col, int track = 0) {
+static void alertText(const char* s, int rightX, int baseY, const GFXfont* f, uint16_t col) {
   tft.setFreeFont(f);
-  int w = tft.textWidth(s);
-  if (track) w += track * (int)(strlen(s) - 1);
-  int x = rightX - w;
   tft.setTextColor(col);
-  if (!track) { tft.setCursor(x, baseY); tft.print(s); return; }
-  for (const char* p = s; *p; p++) {                 // manual tracking (whole-pixel gaps between glyphs)
-    char ch[2] = { *p, '\0' };
-    tft.setCursor(x, baseY); tft.print(ch);
-    x += tft.textWidth(ch) + track;
-  }
+  tft.setCursor(rightX - tft.textWidth(s), baseY);
+  tft.print(s);
+}
+
+// Right-anchored text in the BUILT-IN pixel font — the same font the main screen's header and meta use,
+// so the alert reads as the same instrument rather than a different product. Note built-in fonts position
+// from the cursor's TOP-left (GFX fonts use the baseline), so topY is the top of the glyph cell.
+// (This also replaced a hand-rolled letter-spacing loop that measured each glyph with textWidth(): for a
+// single space TFT_eSPI returns 0, not the advance, so every space collapsed — "27MAGO-17KMDEEP".)
+static void alertTextPixel(const char* s, int rightX, int topY, uint8_t size, uint16_t col) {
+  tft.setTextFont(1);
+  tft.setTextSize(size);
+  tft.setTextColor(col);
+  tft.setCursor(rightX - tft.textWidth(s), topY);
+  tft.print(s);
+  tft.setTextSize(1);                                // restore the global size for everything else
 }
 
 // One place line: right-anchored SeisPlace22, with Māori macron bars restored above the flagged vowels
@@ -2954,9 +2982,9 @@ static void drawAlertContent() {
     if (split < 0) twoLine = false;    // single unbreakable token — let it run full-width on one line
   }
 
-  // Header — two right-anchored green lines (the single-line string is 352px, too wide for 320px).
-  alertText("SEISMIC ACTIVITY", ALERT_RIGHT, 28, FONT_MAG, green);
-  alertText("DETECTED",         ALERT_RIGHT, 50, FONT_MAG, green);
+  // Header — the main screen's pixel font, scaled 2x, so both screens share a type family.
+  alertTextPixel("SEISMIC ACTIVITY", ALERT_RIGHT, 16, 2, green);
+  alertTextPixel("DETECTED",         ALERT_RIGHT, 34, 2, green);
 
   // Magnitude hero — the ONE splash of severity colour. Lifted up when the place wraps to two lines.
   char magStr[10]; snprintf(magStr, sizeof(magStr), "M%.1f", q->magnitude);
@@ -2988,7 +3016,9 @@ static void drawAlertContent() {
     String ago = getTimeAgo(ts); ago.toUpperCase();
     snprintf(meta, sizeof(meta), "%s AGO - %dKM DEEP", ago.c_str(), (int)q->depth);
   }
-  alertText(meta, ALERT_RIGHT, 226, FONT_LABEL, currentTheme.textSecondary, 1);   // dim green, like the main meta
+  // Same pixel font as the main screen's meta, but 2x — the age has twice been misread as "just now",
+  // and this is a takeover screen with room to spare, so it should be legible at a glance.
+  alertTextPixel(meta, ALERT_RIGHT, 216, 2, currentTheme.textSecondary);
 }
 
 // One animation frame: erase the old ring arcs, step the phase out, redraw them fading as they go,
