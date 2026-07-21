@@ -508,7 +508,7 @@
                 "TFT_RST=-1",
                 "TFT_BL=45",
                 "TFT_BACKLIGHT_ON=1",
-                "SPI_FREQUENCY=27000000",
+                "SPI_FREQUENCY=40000000",
                 "SPI_READ_FREQUENCY=16000000",
                 "LOAD_GLCD",
                 "LOAD_FONT2",
