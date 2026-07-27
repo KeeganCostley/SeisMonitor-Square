@@ -218,12 +218,14 @@ struct EarthquakeData {
   float latitude;
   float longitude;
   float depth;
+  float mmi;                 // GeoNet felt-intensity (Modified Mercalli). <-50 = unavailable (USGS regions)
   char location[128];
   unsigned long timestamp;
   bool isValid;
-  
+
   void clear() {
     magnitude = latitude = longitude = depth = 0;
+    mmi = -999.0f;           // unavailable until a GeoNet feed fills it in
     location[0] = '\0';
     timestamp = 0;
     isValid = false;
@@ -563,20 +565,47 @@ float feltSeverity(float magnitude, float depthKm) {
   return eff;
 }
 
-// Severity colour ramp, keyed on the felt (depth-adjusted) magnitude. Climbs in BOTH luminance and
-// saturation — deliberately, because on a black additive display brightness reads as urgency, so the
-// worst event must be the brightest/hottest pixel. (The old ramp ran the other way: its M7 sienna was
-// the DIMMEST colour on the screen, so the biggest quake looked the calmest.)
-uint16_t severityColor(float magnitude, float depthKm) {
-  float eff = feltSeverity(magnitude, depthKm);
-  if (eff >= 7.0f) return 0xFAE9;   // #ff5d4d hot red     — brightest & most saturated
-  if (eff >= 6.0f) return 0xFCA7;   // #ff9538 orange
-  if (eff >= 5.0f) return 0xFE68;   // #ffcf47 amber
-  if (eff >= 4.0f) return 0xCF0B;   // #cfe25f chartreuse
-  return currentTheme.textAccent;   // #7fd69a calm phosphor green (routine — ~90% of alerts)
+// The five severity tiers, as one ramp. Climbs in BOTH luminance and saturation — deliberately, because
+// on a black additive display brightness reads as urgency, so the worst event must be the brightest/
+// hottest pixel. (The old ramp ran the other way: its M7 sienna was the DIMMEST colour on the screen.)
+static uint16_t severityTierColor(int tier) {
+  switch (tier) {
+    case 4:  return 0xFAE9;          // #ff5d4d hot red    — brightest & most saturated
+    case 3:  return 0xFCA7;          // #ff9538 orange
+    case 2:  return 0xFE68;          // #ffcf47 amber
+    case 1:  return 0xCF0B;          // #cfe25f chartreuse
+    default: return currentTheme.textAccent;  // #7fd69a calm phosphor green (routine)
+  }
 }
 
-// Back-compat: magnitude-only callers assume a neutral (10 km) depth.
+// GeoNet MMI (Modified Mercalli Intensity — actual FELT shaking) → tier. This is GeoNet's own computed
+// intensity, which already folds in depth, distance and local geology, so it beats our estimate.
+//   ≤2 barely felt · 3 weak · 4 light/rattly · 5 moderate (all feel it) · 6 strong · 7+ damaging
+static int mmiTier(float mmi) {
+  if (mmi >= 6.0f) return 4;
+  if (mmi >= 5.0f) return 3;
+  if (mmi >= 4.0f) return 2;
+  if (mmi >= 3.0f) return 1;
+  return 0;
+}
+
+// Fallback for feeds without a felt-intensity field (USGS): approximate it from magnitude + depth.
+static int feltTier(float magnitude, float depthKm) {
+  float eff = feltSeverity(magnitude, depthKm);
+  if (eff >= 7.0f) return 4;
+  if (eff >= 6.0f) return 3;
+  if (eff >= 5.0f) return 2;
+  if (eff >= 4.0f) return 1;
+  return 0;
+}
+
+// Severity colour: prefer GeoNet's real MMI (NZ) when we have it, else the magnitude+depth estimate.
+uint16_t severityColor(float magnitude, float depthKm, float mmi = -999.0f) {
+  int tier = (mmi > -50.0f) ? mmiTier(mmi) : feltTier(magnitude, depthKm);
+  return severityTierColor(tier);
+}
+
+// Back-compat: magnitude-only callers assume a neutral (10 km) depth and no MMI.
 uint16_t getMagnitudeColor(float magnitude) { return severityColor(magnitude, 10.0f); }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -672,7 +701,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.8-type", 8, 228, 1);
+    tft.drawString("v7.9-mmi", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -904,9 +933,10 @@ void loop() {
       processQuakes(g_payload, isUsingNZAPI(config.region));
     g_payload = String();                                 // free the buffer
     g_payloadReady = false;                               // release the task to fetch again
-    Serial.printf("[data] region=%s valid=%d mag=%.1f latest_ts=%lu age=%lds loc=[%s]\n",
-                  config.region, (int)latestQuake.isValid, latestQuake.magnitude, latestQuake.timestamp,
-                  (long)time(nullptr) - (long)latestQuake.timestamp, latestQuake.location);
+    Serial.printf("[data] region=%s valid=%d mag=%.1f mmi=%.0f sevTier=%d latest_ts=%lu age=%lds loc=[%s]\n",
+                  config.region, (int)latestQuake.isValid, latestQuake.magnitude, latestQuake.mmi,
+                  (latestQuake.mmi > -50.0f ? mmiTier(latestQuake.mmi) : feltTier(latestQuake.magnitude, latestQuake.depth)),
+                  latestQuake.timestamp, (long)time(nullptr) - (long)latestQuake.timestamp, latestQuake.location);
     // NOT while an alert is up: processQuakes() may have just raised one (same iteration — the
     // showingAlert check at the top of loop() already ran), and these two repaint the DATA + MAP
     // panels straight over it, leaving the alert showing only in the gaps with its rings still
@@ -2642,12 +2672,13 @@ String fetchPayload(const char* apiURL) {
 //    the UI core, so all the TFT/seismo touches here are safe. ──
 void processQuakes(String& payload, bool usingNZ) {
   // For USGS feeds, use streaming parser with filter to reduce memory
-  DynamicJsonDocument filter(200);
+  DynamicJsonDocument filter(384);   // bumped from 200 — headroom after adding the mmi key
   filter["features"][0]["geometry"]["coordinates"] = true;
   filter["features"][0]["properties"]["mag"] = true;
   filter["features"][0]["properties"]["place"] = true;
   filter["features"][0]["properties"]["time"] = true;
   filter["features"][0]["properties"]["magnitude"] = true;
+  filter["features"][0]["properties"]["mmi"] = true;           // GeoNet felt-intensity → drives NZ severity
   filter["features"][0]["properties"]["locality"] = true;
   filter["features"][0]["properties"]["depth"] = true;
   filter["features"][0]["properties"]["time"] = true;
@@ -2809,6 +2840,10 @@ void processQuakes(String& payload, bool usingNZ) {
       latestQuake.latitude = lat;
       latestQuake.longitude = lon;
       latestQuake.depth = depth;
+      // GeoNet ships a real felt-intensity (mmi); USGS doesn't, so mark it unavailable and let the
+      // magnitude+depth estimate take over. Note GeoNet uses mmi = -1 for "not felt" — a valid value,
+      // so only the <-50 sentinel means "no data".
+      latestQuake.mmi = usingNZ ? latest["properties"]["mmi"].as<float>() : -999.0f;
       abbreviatePlace(loc, latestQuake.location, sizeof(latestQuake.location));
       
       // Use actual earthquake timestamp from API - convert to epoch seconds
@@ -3051,7 +3086,7 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   showingAlert   = true;
   alertStartTime = millis();
   alertQuake     = *quake;
-  alertColor     = severityColor(quake->magnitude, quake->depth);   // depth-aware; drives the magnitude only
+  alertColor     = severityColor(quake->magnitude, quake->depth, quake->mmi);   // GeoNet MMI if we have it, else depth estimate
   alertRingPhase = 0;
 
   tft.fillScreen(currentTheme.background);
