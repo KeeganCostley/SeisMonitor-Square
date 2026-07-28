@@ -140,6 +140,9 @@ const int MAP_BOX_H = 190;
 // Soft-green structural panel borders (June-20 handoff)
 const uint16_t PANEL_EDGE     = 0x2246;          // #234a36
 const uint16_t PANEL_EDGE_DIM = 0x1183;          // #16301f
+const uint16_t WIFI_OFF_GRAY  = 0x630C;          // #636363 neutral gray — the WIFI label when offline
+                                                 // (desaturated, so it clearly reads "not connected" against
+                                                 // the green — a dim GREEN was too close to the connected look)
 const uint16_t GEO_DIM        = 0x2227;          // faint green — barely-there OCEAN-TRENCH texture (Japan/Cascadia; dimmed: was too "stringy")
 const uint16_t GEO_FAULT      = 0x2B69;          // muted green — visible-but-subtle LAND-FAULT lines (NZ/China/California)
 
@@ -254,6 +257,7 @@ int recentQuakeCount = 0;
 int displayMode = 0;
 bool isRestMode = false;
 bool isConfigMode = false;
+bool configOnDemand = false;     // true when setup was opened from Settings (so it offers a Cancel, unlike boot)
 bool showingAlert = false;
 bool showingRegionPicker = false;   // gear-opened location picker
 
@@ -641,6 +645,11 @@ int  regionAtPoint(int16_t sx, int16_t sy);
 void selectRegion(int idx);
 void handleButton();
 void setupConfigPortal();
+void drawSetupScreen(bool onDemand);
+void startWifiSetup();
+void exitWifiSetup();
+bool readTouch(int16_t &x, int16_t &y);
+void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy);
 void setupWebServer();
 void handleWebRoot();
 void handleWebSave();
@@ -701,7 +710,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v7.9-mmi", 8, 228, 1);
+    tft.drawString("v8.0-wifi", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -838,6 +847,17 @@ void loop() {
   
   if (isConfigMode) {
     dnsServer.processNextRequest();
+    if (configOnDemand) {                        // on-demand setup offers a Cancel (boot setup does not)
+      int16_t tx, ty;
+      if (readTouch(tx, ty)) {
+        int16_t sx, sy; mapTouch(tx, ty, sx, sy);
+        if (sx >= 90 && sx <= 230 && sy >= 192 && sy <= 224) {   // the CANCEL button drawn by drawSetupScreen
+          delay(80);                             // let the finger lift so it doesn't immediately re-tap
+          exitWifiSetup();
+          return;
+        }
+      }
+    }
     delay(10);
     return;
   }
@@ -880,6 +900,18 @@ void loop() {
     if (tnow > 1600000000) {
       struct tm lt; localtime_r(&tnow, &lt);
       if (lt.tm_min != lastClockMin) { lastClockMin = lt.tm_min; drawHeader(); }
+    }
+  }
+
+  // Reflect WiFi drops/reconnects PROMPTLY, not just on the minute tick — otherwise the header keeps
+  // claiming "connected" for up to a minute after the network's actually gone. Poll is cheap; redraw
+  // only when the state flips (and not over the alert/picker, which own the screen).
+  {
+    static int lastWifi = -1;
+    int w = (WiFi.status() == WL_CONNECTED) ? 1 : 0;
+    if (w != lastWifi) {
+      lastWifi = w;
+      if (!showingAlert && !showingRegionPicker) drawHeader();
     }
   }
 
@@ -1125,7 +1157,7 @@ void drawHeader() {
   } else {
     strcpy(clk, "--:--");
   }
-  uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? sec : currentTheme.sub;
+  uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? sec : WIFI_OFF_GRAY;   // gray = not connected
   int xc = GEAR_CX - 8 - 6;                            // just left of the cog
   int wW = tft.textWidth("WIFI");
   tft.setTextColor(wifiCol);
@@ -3137,6 +3169,7 @@ const int PICK_PITCH = 28;
 // sensitive = more alerts (catch smaller / more-frequent quakes live); higher = only the big ones.
 const float SENS_MIN = 0.5f, SENS_MAX = 5.0f;
 const int SENS_X = 174, SENS_Y = 166, SENS_W = 132, SENS_H = 13;
+const int WIFI_BTN_Y = 125, WIFI_BTN_H = 14;   // tappable WiFi setup button in Settings (x spans 174..312)
 
 void drawSensitivityBar() {
   tft.fillRect(SENS_X - 2, 140, SCREEN_WIDTH - (SENS_X - 2), 62, currentTheme.background);   // clear area
@@ -3253,9 +3286,9 @@ void drawRegionPicker() {
   tft.drawFastHLine(rx, 82, SCREEN_WIDTH - rx - 8, currentTheme.divider);
 
   tft.setTextFont(1);
-  int ry = 92;
+  int ry = 88;
   const char* keys[3] = {"SIGNAL", "IP ADDR", "STATUS"};
-  for (int i = 0; i < 3; i++, ry += 16) {
+  for (int i = 0; i < 3; i++, ry += 14) {
     tft.setTextColor(currentTheme.sub);
     tft.setCursor(rx, ry);
     tft.print(keys[i]);
@@ -3270,13 +3303,23 @@ void drawRegionPicker() {
     tft.print(val);
   }
 
+  // Tappable WiFi button — opens the on-demand phone setup portal (handleButton → startWifiSetup).
+  // Label reflects state: nothing saved / offline → "SET UP", already connected → "CHANGE".
+  {
+    int bwx = rx, bwy = WIFI_BTN_Y, bww = SCREEN_WIDTH - 8 - rx, bwh = WIFI_BTN_H;
+    tft.drawRoundRect(bwx, bwy, bww, bwh, 3, currentTheme.textAccent);
+    tft.setTextFont(1);
+    tft.setTextColor(currentTheme.textAccent);
+    tft.drawCentreString(conn ? "CHANGE WIFI >" : "SET UP WIFI >", bwx + bww / 2, bwy + 4, 1);
+  }
+
   drawSensitivityBar();
 
   // ── Footer hint ──
   tft.drawFastHLine(0, SCREEN_HEIGHT - 16, SCREEN_WIDTH, currentTheme.border);
   tft.setTextFont(1);
   tft.setTextColor(currentTheme.sub);
-  tft.drawCentreString("TAP: REGION  ·  SENSITIVITY BAR  ·  < CLOSE", 160, SCREEN_HEIGHT - 11, 1);
+  tft.drawCentreString("TAP: REGION  ·  WIFI  ·  SENS  ·  < CLOSE", 160, SCREEN_HEIGHT - 11, 1);
 }
 
 // Returns picker row 0..4 under a screen point, or -1 if none.
@@ -3393,6 +3436,10 @@ void handleButton() {
           int picked = regionAtPoint(sx, sy);
           if (picked >= 0)             selectRegion(picked);                       // chose a region
           else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
+          else if (sx >= 174 && sx <= 312 &&
+                   sy >= WIFI_BTN_Y - 3 && sy <= WIFI_BTN_Y + WIFI_BTN_H + 3) {    // "SET UP / CHANGE WIFI" button
+            startWifiSetup();
+          }
           // (the sensitivity bar is handled by the live-drag block above)
           // Gear corner (top-right) deliberately does NOT close.
         }
@@ -3603,24 +3650,77 @@ void playStartupRumble() {
 // WEB SERVER - CONFIG PORTAL
 // ═══════════════════════════════════════════════════════════════════════════
 
+// The setup instructions screen — plain-English steps to join the device's hotspot from a phone. The
+// network name and URL are the two things that matter, so they're big and accent-coloured. On-demand
+// (opened from Settings) adds a Cancel button; the boot version has none (there's no network to go back to).
+void drawSetupScreen(bool onDemand) {
+  tft.fillScreen(currentTheme.background);
+
+  tft.setTextColor(currentTheme.textAccent);
+  tft.drawCentreString(onDemand ? "ADD / CHANGE WIFI" : "WIFI SETUP", 160, 12, 2);
+  tft.drawFastHLine(60, 34, 200, PANEL_EDGE);
+
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.drawCentreString("On your phone, open WiFi and join:", 160, 48, 1);
+  tft.setTextColor(currentTheme.textAccent);
+  tft.drawCentreString("SeisMonitor-Setup", 160, 62, 2);
+
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.drawCentreString("then open a browser to:", 160, 92, 1);
+  tft.setTextColor(currentTheme.textAccent);
+  tft.drawCentreString("192.168.4.1", 160, 106, 2);
+
+  tft.setTextFont(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.drawCentreString("Enter your WiFi name & password, then save.", 160, 140, 1);
+
+  if (onDemand) {                                  // Cancel button — mirrored by the touch zone in loop()
+    int bw = 130, bh = 24, bx = 160 - bw / 2, by = 196;
+    tft.drawRoundRect(bx, by, bw, bh, 4, currentTheme.textSecondary);
+    tft.setTextColor(currentTheme.textSecondary);
+    tft.drawCentreString("< CANCEL", 160, by + 8, 1);
+  } else {
+    tft.setTextColor(currentTheme.sub);
+    tft.drawCentreString("waiting for setup...", 160, 200, 1);
+  }
+}
+
 void setupConfigPortal() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP("SeisMonitor-Setup");
-  
+
   IPAddress IP = WiFi.softAPIP();
   Serial.println("AP: " + IP.toString());
-  
-  dnsServer.start(DNS_PORT, "*", IP);
-  
-  tft.fillScreen(currentTheme.background);
-  tft.setTextColor(currentTheme.textPrimary);
-  tft.drawCentreString("SETUP MODE", 160, 75, 4);
 
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.drawCentreString("WiFi: SeisMonitor-Setup", 160, 115, 2);
-  tft.drawCentreString("URL: 192.168.4.1", 160, 138, 2);
-  
+  dnsServer.start(DNS_PORT, "*", IP);
+  drawSetupScreen(configOnDemand);
   setupWebServer();
+}
+
+// Open the setup portal from Settings (device is running normally, just wants a new network).
+void startWifiSetup() {
+  Serial.println("[wifi] opening setup portal on demand");
+  showingRegionPicker = false;
+  configOnDemand = true;
+  isConfigMode = true;
+  setupConfigPortal();
+}
+
+// Cancel an on-demand setup: tear down the AP, reconnect to the saved network (may fail = honestly
+// offline), and return to the monitor. Boot-time setup can't cancel — there's nowhere to return to.
+void exitWifiSetup() {
+  Serial.println("[wifi] cancel setup, reconnecting to saved network");
+  server.stop();
+  dnsServer.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  if (strlen(config.wifiSSID)) WiFi.begin(config.wifiSSID, config.wifiPassword);
+  isConfigMode = false;
+  configOnDemand = false;
+  drawUI();
+  lastActivity = millis();
 }
 
 void setupWebServer() {
