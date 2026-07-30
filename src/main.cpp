@@ -710,7 +710,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.1-nz", 8, 228, 1);
+    tft.drawString("v8.2-ssid", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3273,9 +3273,26 @@ void drawRegionPicker() {
   tft.print("NETWORK");
   tft.setFreeFont(FONT_DATA);
   tft.setTextColor(currentTheme.textPrimary);
+  tft.setTextWrap(false);                          // a long SSID must CLIP, never wrap back to x0 over the region list
   tft.setCursor(rx, 74);
-  char ssid[18]; strncpy(ssid, config.wifiSSID, sizeof(ssid) - 1); ssid[sizeof(ssid) - 1] = '\0';
-  tft.print(strlen(ssid) ? ssid : "--");
+  // WiFi SSIDs run up to 32 chars — easily wider than the panel. Fit it into the space before the
+  // signal bars and add ".." if it's too long. (The bug: the old code printed ~17 chars with no width
+  // check and wrap ON, so a long name wrapped onto the left column, over Japan.)
+  const int SSID_MAXW = 116;                       // rx(174) .. ~x290, clear of the bars at x298
+  char ssid[40];
+  strncpy(ssid, config.wifiSSID, sizeof(ssid) - 1); ssid[sizeof(ssid) - 1] = '\0';
+  if (!ssid[0]) strcpy(ssid, "--");
+  if (tft.textWidth(ssid) > SSID_MAXW) {
+    int len = strlen(ssid);
+    while (len > 1) {
+      char cand[44]; snprintf(cand, sizeof(cand), "%.*s..", len, ssid);
+      if (tft.textWidth(cand) <= SSID_MAXW) break;
+      len--;
+    }
+    ssid[len] = '\0'; strcat(ssid, "..");
+  }
+  tft.print(ssid);
+  tft.setTextWrap(true);                            // restore default wrap for the rest of the UI
 
   int bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
   for (int i = 0; i < 4; i++) {                                         // 4 signal bars (right)
