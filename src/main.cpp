@@ -710,7 +710,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.0-wifi", 8, 228, 1);
+    tft.drawString("v8.1-nz", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -1130,7 +1130,7 @@ void drawHeader() {
   tft.fillCircle(dx + 1, 11, 1, acc);                 // · separator
   int rx = dx + 4;
   if (strcmp(config.region, "NZ") == 0) {
-    tft.setCursor(rx, 7); tft.print("AOTEAROA NZ");
+    tft.setCursor(rx, 7); tft.print("AOTEAROA NEW ZEALAND");
   } else if (strcmp(config.region, "China") == 0) {            // 中国
     drawGlyphGray(rx, 3, GLYPH_ZHONG, acc, currentTheme.background);
     drawGlyphGray(rx + 18, 3, GLYPH_GUO, acc, currentTheme.background);
