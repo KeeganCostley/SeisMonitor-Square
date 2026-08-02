@@ -651,6 +651,8 @@ void exitWifiSetup();
 bool readTouch(int16_t &x, int16_t &y);
 void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy);
 void setupWebServer();
+void scanWifiNetworks();
+void handleWifiRescan();
 void handleWebRoot();
 void handleWebSave();
 void handleWebNotFound();
@@ -710,7 +712,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.2-ssid", 8, 228, 1);
+    tft.drawString("v8.3-scan", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3704,8 +3706,31 @@ void drawSetupScreen(bool onDemand) {
   }
 }
 
+// Cached nearby-network scan, shown as a picker on the setup page so you don't have to type the SSID.
+#define MAX_WIFI_SCAN 16
+String g_scanSSID[MAX_WIFI_SCAN];
+int    g_scanRSSI[MAX_WIFI_SCAN];
+int    g_scanCount = 0;
+
+void scanWifiNetworks() {
+  int n = WiFi.scanNetworks();                     // blocking (~2-5s); needs AP_STA mode (set in setupConfigPortal)
+  g_scanCount = 0;
+  for (int i = 0; i < n && g_scanCount < MAX_WIFI_SCAN; i++) {
+    String s = WiFi.SSID(i);
+    if (s.length() == 0) continue;                 // hidden network — can still be typed by hand
+    bool dup = false;                              // collapse duplicate SSIDs (mesh / multi-band)
+    for (int j = 0; j < g_scanCount; j++) if (g_scanSSID[j] == s) { dup = true; break; }
+    if (dup) continue;
+    g_scanSSID[g_scanCount] = s;
+    g_scanRSSI[g_scanCount] = WiFi.RSSI(i);
+    g_scanCount++;
+  }
+  WiFi.scanDelete();                               // free the scan buffer
+  Serial.printf("[wifi] scan found %d networks\n", g_scanCount);
+}
+
 void setupConfigPortal() {
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);                          // AP_STA (not AP) so we can also SCAN for nearby networks
   WiFi.softAP("SeisMonitor-Setup");
 
   IPAddress IP = WiFi.softAPIP();
@@ -3713,6 +3738,8 @@ void setupConfigPortal() {
 
   dnsServer.start(DNS_PORT, "*", IP);
   drawSetupScreen(configOnDemand);
+  scanWifiNetworks();                              // scan now, before anyone connects (the scan briefly
+                                                   // disturbs the AP, harmless with no client yet)
   setupWebServer();
 }
 
@@ -3740,8 +3767,14 @@ void exitWifiSetup() {
   lastActivity = millis();
 }
 
+void handleWifiRescan() {
+  scanWifiNetworks();     // re-scan (briefly disturbs the AP), then re-render the form with the fresh list
+  handleWebRoot();
+}
+
 void setupWebServer() {
   server.on("/", handleWebRoot);
+  server.on("/rescan", handleWifiRescan);
   server.on("/save", HTTP_POST, handleWebSave);
   server.on("/testsound", handleTestSound);
   server.on("/testquake", handleTestQuake);
@@ -3751,9 +3784,19 @@ void setupWebServer() {
 }
 
 void handleWebRoot() {
-  String html = R"(<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>SeisMonitor</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#e8e8e8;padding:20px}h1{text-align:center;margin:20px 0;color:#88C8B0;letter-spacing:2px}.container{max-width:500px;margin:0 auto;background:#1a1a1a;padding:30px;border:1px solid#333}label{display:block;margin:15px 0 5px;font-size:12px;text-transform:uppercase;color:#888}input,select{width:100%;padding:12px;background:#0f0f0f;border:1px solid#333;color:#fff;border-radius:5px;font-size:16px}input[type=range]{padding:0;height:40px;-webkit-appearance:none}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;background:#88C8B0;border-radius:50%;cursor:pointer}input[type=range]::-webkit-slider-runnable-track{height:4px;background:#333;border-radius:2px}o{display:block;text-align:center;color:#88C8B0;font-size:24px;font-weight:600;margin:10px 0}button{width:100%;padding:15px;background:#88C8B0;color:#000;border:none;border-radius:5px;font-size:14px;font-weight:600;margin-top:20px;cursor:pointer}button:hover{background:#9AD8C0}</style></head><body><h1>SEISMONITOR</h1><div class="container"><form action="/save" method="POST"><label>WiFi Network</label><input name="ssid" value=")";
+  String html = R"(<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>SeisMonitor</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#e8e8e8;padding:20px}h1{text-align:center;margin:20px 0;color:#88C8B0;letter-spacing:2px}.container{max-width:500px;margin:0 auto;background:#1a1a1a;padding:30px;border:1px solid#333}label{display:block;margin:15px 0 5px;font-size:12px;text-transform:uppercase;color:#888}input,select{width:100%;padding:12px;background:#0f0f0f;border:1px solid#333;color:#fff;border-radius:5px;font-size:16px}input[type=range]{padding:0;height:40px;-webkit-appearance:none}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;background:#88C8B0;border-radius:50%;cursor:pointer}input[type=range]::-webkit-slider-runnable-track{height:4px;background:#333;border-radius:2px}o{display:block;text-align:center;color:#88C8B0;font-size:24px;font-weight:600;margin:10px 0}button{width:100%;padding:15px;background:#88C8B0;color:#000;border:none;border-radius:5px;font-size:14px;font-weight:600;margin-top:20px;cursor:pointer}button:hover{background:#9AD8C0}</style></head><body><h1>SEISMONITOR</h1><div class="container"><form action="/save" method="POST"><label>WiFi Network</label><select onchange="if(this.value)document.getElementById('ssid').value=this.value"><option value="">)";
+  html += (g_scanCount > 0) ? "&mdash; choose a nearby network &mdash;" : "(none found &mdash; type below or rescan)";
+  html += R"(</option>)";
+  for (int i = 0; i < g_scanCount; i++) {          // nearby networks; label the signal strength
+    String s = g_scanSSID[i];
+    s.replace("&", "&amp;"); s.replace("<", "&lt;"); s.replace(">", "&gt;"); s.replace("\"", "&quot;");
+    int r = g_scanRSSI[i];
+    const char* sig = (r > -60) ? " (strong)" : (r > -72) ? " (ok)" : " (weak)";
+    html += "<option value=\"" + s + "\">" + s + sig + "</option>";
+  }
+  html += R"(</select><input id="ssid" name="ssid" placeholder="or type a network name" value=")";
   html += config.wifiSSID;
-  html += R"(" required><label>WiFi Password</label><input type="password" name="password" value=")";
+  html += R"(" required><a href="/rescan" style="display:inline-block;margin-top:8px;color:#88C8B0;font-size:13px;text-decoration:none">&#8635; Rescan networks</a><label>WiFi Password</label><input type="password" name="password" value=")";
   html += config.wifiPassword;
   html += R"("><label>Region</label><select name="region"><option value="NZ")";
   if (strcmp(config.region, "NZ") == 0) html += " selected";
