@@ -94,6 +94,7 @@ const unsigned long SEISMO_UPDATE_INTERVAL = 50;    // 50ms — smoother / highe
 const unsigned long DISPLAY_CYCLE_INTERVAL = 60000; // 60 seconds
 const unsigned long REST_MODE_TIMEOUT = 45000;      // 45 seconds
 const unsigned long ALERT_DURATION = 25000;         // 25 seconds
+const unsigned long DEMO_ALERT_MS  = 7000;          // shorter alert while the showreel is playing
 const unsigned long DEBOUNCE_DELAY = 300;           // 300ms
 const int HTTP_TIMEOUT = 15000;                     // 15s — the California M1.0+ feed is ~112KB; small feeds still return fast (this is only a ceiling)
 const byte DNS_PORT = 53;
@@ -258,6 +259,13 @@ int displayMode = 0;
 bool isRestMode = false;
 bool isConfigMode = false;
 bool configOnDemand = false;     // true when setup was opened from Settings (so it offers a Cancel, unlike boot)
+
+// ── Demo / showreel mode (scripted, NON-live — for photos & video) ──
+bool demoMode = false;
+int  demoPhase = -1;             // -1 = boot sequence, then 0..DEMO_N-1 region scenes
+int  demoStep  = 0;              // sub-step within a scene (map → pulse → alert)
+unsigned long demoPhaseStart = 0, demoStartMs = 0, demoPulseUntil = 0;
+char demoSavedRegion[16] = "";   // the user's real region, restored when the demo exits
 bool showingAlert = false;
 bool showingRegionPicker = false;   // gear-opened location picker
 
@@ -640,6 +648,10 @@ void fetchTask(void* param);
 void displayEarthquakeAlert(EarthquakeData* quake);
 void animateAlertRings();
 void previewAlertCycle();
+void startDemo();
+void exitDemo();
+void runDemo();
+void startDemoScene(int i);
 void drawRegionPicker();
 int  regionAtPoint(int16_t sx, int16_t sy);
 void selectRegion(int idx);
@@ -712,7 +724,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.3-scan", 8, 228, 1);
+    tft.drawString("v8.4-demo", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -873,7 +885,7 @@ void loop() {
   unsigned long now = millis();
 
   if (showingAlert) {
-    if (now - alertStartTime > ALERT_DURATION) {
+    if (now - alertStartTime > (demoMode ? DEMO_ALERT_MS : ALERT_DURATION)) {
       showingAlert = false;
       drawUI();
       lastActivity = now;
@@ -891,6 +903,13 @@ void loop() {
       lastActivity = now;
     }
     return;
+  }
+
+  // Demo/showreel: advance the script, then fall through so the normal animations carry the scene
+  // (except the boot phase, which owns the whole screen).
+  if (demoMode) {
+    runDemo();
+    if (demoPhase < 0) return;
   }
 
   // Keep the header clock live: it otherwise only refreshes on a full UI redraw, so the HH:MM
@@ -924,8 +943,8 @@ void loop() {
 
   // Live epicenter pulse — radiating rings on the LATEST quake, but ONLY while it's fresh: every
   // 10 minutes during its first hour, then nothing (no animation for older quakes). A newly-arrived
-  // quake pulses ~8s after it appears.
-  {
+  // quake pulses ~8s after it appears.  (Skipped in demo mode — the showreel drives its own pulse.)
+  if (!demoMode) {
     static unsigned long nextPulse = 0, pulseStart = 0, pulsedTs = 0;
     static bool pulseActive = false;
     time_t te = time(nullptr);
@@ -960,6 +979,7 @@ void loop() {
 
   // Apply a payload the background task fetched (parse + react happen HERE, on the UI core). The task
   // owns the 90s polling; the loop just consumes results, so the network never blocks the animation.
+  if (g_payloadReady && demoMode) { g_payload = String(); g_payloadReady = false; }   // demo: drop live data
   if (g_payloadReady) {
     unsigned long lT = latestQuake.timestamp, hT = highestRegionalQuake.timestamp;
     float         lM = latestQuake.magnitude, hM = highestRegionalQuake.magnitude;
@@ -3152,6 +3172,106 @@ void previewAlertCycle() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DEMO / SHOWREEL — a scripted, NON-live sequence for photos & video. A boot animation, then each region
+// in turn (NZ with a felt event + epicentre pulse + the alert screen; the wireframe globe for Global),
+// looping. Data is hand-picked real events. Started from Settings; a screen tap exits back to live.
+// ═══════════════════════════════════════════════════════════════════════════
+struct DemoQ { float mag, depth, lat, lon, mmi; const char* place; };
+struct DemoScene { const char* region; DemoQ latest; DemoQ high; bool alert; unsigned long durMs; };
+
+static const DemoScene DEMO[] = {
+  // NZ — a Te Reo macron on the alert (Taupō); a benign rural second name (deliberately NOT Wellington).
+  { "NZ",
+    { 4.3f,  6.0f, -38.68f, 176.08f, 5.0f, "8km NE of Taup\xC5\x8D" },      // Taupō (ō = UTF-8 C5 8D)
+    { 5.1f, 12.0f, -42.52f, 172.83f, 4.0f, "15km W of Hanmer Springs" },
+    true, 26000 },
+  // Global — significant recent worldwide events; the wireframe globe spins.
+  { "Global",
+    { 6.8f, 10.0f,  32.68f, 130.72f, -999.0f, "Kumamoto, Japan" },
+    { 7.3f, 22.0f,  14.64f, -92.90f, -999.0f, "Puerto Madero, Mexico" },
+    false, 13000 },
+  // Japan — the 2026 M6.8 Kumamoto event.
+  { "Japan",
+    { 6.8f, 10.0f,  32.68f, 130.72f, -999.0f, "12km E of Kumamoto, Japan" },
+    { 5.5f, 82.0f,  41.35f, 141.90f, -999.0f, "57km E of Mutsu, Japan" },
+    false, 10000 },
+  // China
+  { "China",
+    { 5.8f, 10.0f,  35.43f,  99.56f, -999.0f, "Qinghai, China" },
+    { 5.1f, 10.0f,  35.42f,  99.49f, -999.0f, "Qinghai, China" },
+    false, 10000 },
+  // California — quiet at M4.5+ in real feeds, so plausible curated events near Ridgecrest.
+  { "California",
+    { 4.4f,  8.0f,  35.55f,-117.60f, -999.0f, "18km SE of Ridgecrest, CA" },
+    { 4.1f,  6.0f,  36.20f,-120.30f, -999.0f, "8km NE of Coalinga, CA" },
+    false, 10000 },
+};
+static const int DEMO_N = (int)(sizeof(DEMO) / sizeof(DEMO[0]));
+
+static void demoLoad(EarthquakeData& q, const DemoQ& s, long agoSec) {
+  q.clear();
+  q.magnitude = s.mag; q.depth = s.depth; q.latitude = s.lat; q.longitude = s.lon; q.mmi = s.mmi;
+  strncpy(q.location, s.place, sizeof(q.location) - 1); q.location[sizeof(q.location) - 1] = '\0';
+  time_t t = time(nullptr);
+  q.timestamp = (t > 1600000000) ? (unsigned long)t - agoSec : 0;   // synced -> real "N ago"; offline -> "?"
+  q.isValid = true;
+}
+
+void startDemoScene(int i) {
+  demoPhase = i; demoStep = 0; demoPhaseStart = millis();
+  const DemoScene& sc = DEMO[i];
+  strncpy(config.region, sc.region, sizeof(config.region) - 1); config.region[sizeof(config.region) - 1] = '\0';
+  demoLoad(latestQuake, sc.latest, 90);
+  demoLoad(highestRegionalQuake, sc.high, 10800);
+  drawUI();                                    // header + data + map (markers) + seismo for this region
+}
+
+void startDemo() {
+  strncpy(demoSavedRegion, config.region, sizeof(demoSavedRegion) - 1);   // remember the live region
+  demoSavedRegion[sizeof(demoSavedRegion) - 1] = '\0';
+  demoMode = true; showingRegionPicker = false; showingAlert = false;
+  demoPhase = -1; demoStep = 0; demoPhaseStart = millis(); demoStartMs = millis();
+  tft.fillScreen(currentTheme.background);
+}
+
+void exitDemo() {
+  demoMode = false; showingAlert = false;
+  strncpy(config.region, demoSavedRegion, sizeof(config.region) - 1); config.region[sizeof(config.region) - 1] = '\0';
+  latestQuake.clear(); highestRegionalQuake.clear();
+  drawUI();
+  requestFetch();                              // pull live data for the restored region
+  lastActivity = millis();
+}
+
+// Advance the showreel. Called each loop() while demoMode; the normal loop animations (globe spin,
+// seismograph, and — via the pulse below — the epicentre burst) carry each scene between transitions.
+void runDemo() {
+  unsigned long now = millis();
+  unsigned long el = now - demoPhaseStart;
+
+  if (demoPhase < 0) {                          // BOOT sequence (plays once at the start)
+    int frame = (int)(el / 100);
+    if (el < 4200)      drawLoadingScreen("CONNECTING TO WIFI", frame);
+    else if (el < 7800) drawLoadingScreen("FETCHING SEISMIC DATA", frame);
+    else                startDemoScene(0);
+    return;
+  }
+
+  const DemoScene& sc = DEMO[demoPhase];
+
+  if (sc.alert) {                              // NZ: epicentre pulse (~8s), then the alert screen (~13.5s)
+    if (demoStep == 0 && el > 8000)  { demoStep = 1; demoPulseUntil = now + 3500; }
+    if (now < demoPulseUntil)        { if (now - lastMapPing > 180) { animateMapPing(); lastMapPing = now; } }
+    else if (demoStep == 1)          { demoStep = 2; updateMapEarthquakeMarkers(); }   // restore clean markers
+    if (demoStep == 2 && el > 13500) { demoStep = 3; displayEarthquakeAlert(&latestQuake); }
+  }
+
+  if (el > sc.durMs && !showingAlert) {         // next scene — loop the REGIONS (boot only plays once)
+    startDemoScene((demoPhase + 1) % DEMO_N);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LOCATION PICKER  (gear → choose region)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -3259,6 +3379,15 @@ void drawRegionPicker() {
     tft.setTextColor(on ? currentTheme.textPrimary : currentTheme.textSecondary);
     tft.setCursor(PICK_X + 22, cyc + 5);
     tft.print(REGION_LABELS[i]);
+  }
+
+  // ── DEMO / showreel button (below the region list) — plays a scripted, non-live sequence for filming.
+  {
+    int dy = PICK_Y0 + REGION_COUNT * PICK_PITCH;    // just under the last region row
+    tft.drawRoundRect(PICK_X, dy, PICK_W, 20, 3, currentTheme.dataHighest);
+    tft.setTextFont(1);
+    tft.setTextColor(currentTheme.dataHighest);
+    tft.drawCentreString("> DEMO REEL", PICK_X + PICK_W / 2, dy + 6, 1);
   }
 
   // ── RIGHT: WIFI CONNECTION ──
@@ -3407,6 +3536,16 @@ void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy) {
 }
 
 void handleButton() {
+  // Demo/showreel: any tap exits back to live. A ~2s grace ignores the tap that launched it (and lets
+  // the boot animation play), so the finger-still-down from that press can't immediately cancel it.
+  if (demoMode) {
+    if (millis() - demoStartMs > 2000) {
+      int16_t tx, ty;
+      if (readTouch(tx, ty)) exitDemo();
+    }
+    return;
+  }
+
   if (showingAlert) return;
 
   unsigned long now = millis();
@@ -3453,8 +3592,13 @@ void handleButton() {
         // releasedSinceOpen false, so it can never select a region or close.
         if (releasedSinceOpen && (now - pickerStartTime > 400)) {
           int picked = regionAtPoint(sx, sy);
+          int demoY = PICK_Y0 + REGION_COUNT * PICK_PITCH;                         // the DEMO REEL button row
           if (picked >= 0)             selectRegion(picked);                       // chose a region
           else if (sx < 90 && sy < 30) { showingRegionPicker = false; drawUI(); }  // < BACK (top-left) closes
+          else if (sx >= PICK_X && sx <= PICK_X + PICK_W &&
+                   sy >= demoY - 2 && sy <= demoY + 22) {                          // "> DEMO REEL" button
+            startDemo();
+          }
           else if (sx >= 174 && sx <= 312 &&
                    sy >= WIFI_BTN_Y - 3 && sy <= WIFI_BTN_Y + WIFI_BTN_H + 3) {    // "SET UP / CHANGE WIFI" button
             startWifiSetup();
