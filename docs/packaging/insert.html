@@ -1,0 +1,174 @@
+<title>SeisMonitor — Box Insert</title>
+<style>
+  :root{
+    /* device "soft HUD" system — the card's own fixed world */
+    --bg:#03080a; --ink:#b8e6c4; --phosphor:#7fd69a; --dim:#4a8a68; --faint:#355a48;
+    --edge:#234a36; --edge-dim:#16301f; --latest:#9de8b2; --chartreuse:#d4e88a; --bright:#00b347;
+    /* neutral "table" the cards sit on — this part follows the viewer's theme */
+    --ground:#e8e5dd; --ground-ink:#33322e; --ground-faint:#8a877e;
+    --mono:ui-monospace,"JetBrains Mono","SFMono-Regular","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){ :root{ --ground:#101315; --ground-ink:#c9d2cd; --ground-faint:#5c6560; } }
+  :root[data-theme="light"]{ --ground:#e8e5dd; --ground-ink:#33322e; --ground-faint:#8a877e; }
+  :root[data-theme="dark"]{ --ground:#101315; --ground-ink:#c9d2cd; --ground-faint:#5c6560; }
+
+  *{ box-sizing:border-box; }
+
+  .stage{
+    background:var(--ground); color:var(--ground-ink); font-family:var(--sans);
+    min-height:100vh; padding:clamp(22px,5vw,60px) 16px;
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+  }
+  .stage__lead{ font-family:var(--mono); font-size:11.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ground-faint); }
+  .stage__lead b{ color:var(--ground-ink); font-weight:600; }
+  .face{ display:flex; flex-direction:column; align-items:center; gap:9px; margin-top:14px; }
+  .face__cap{ font-family:var(--mono); font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--ground-faint); }
+
+  /* ── the card: a dark phosphor object, identical in any viewer theme ── */
+  .card{
+    width:min(93vw,440px); aspect-ratio:1/1; position:relative; overflow:hidden;
+    background:radial-gradient(135% 120% at 100% -10%,#0a1714 0%,var(--bg) 58%);
+    color:var(--ink); border:1px solid var(--edge); border-radius:5px;
+    padding:clamp(20px,6%,32px);
+    display:flex; flex-direction:column;
+    box-shadow:0 22px 55px -26px rgba(0,0,0,.7);
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .card::after{ /* faint scan-line texture, like the panel */
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+    background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.14) 3px 4px);
+  }
+  .rings{ position:absolute; z-index:0; pointer-events:none; }
+
+  .eyebrow{ display:flex; align-items:center; gap:7px; font-family:var(--mono);
+            font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--phosphor); }
+  .eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--phosphor); box-shadow:0 0 7px var(--phosphor); }
+
+  .wordmark{ position:relative; z-index:1; font-family:var(--mono); font-weight:600;
+             font-size:clamp(23px,6.6vw,31px); letter-spacing:.16em; color:var(--ink);
+             text-shadow:0 0 16px rgba(127,214,154,.28); margin:0; }
+  .tagline{ position:relative; z-index:1; font-size:13.5px; line-height:1.5; color:var(--ink);
+            max-width:34ch; margin:9px 0 0; }
+  .tagline .soft{ color:var(--dim); }
+
+  .trace{ display:block; width:100%; height:26px; margin:auto 0; opacity:.9; }
+
+  /* credit "cells", in the device's data-panel language */
+  .cells{ display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
+  .cell__k{ font-family:var(--mono); font-size:9.5px; letter-spacing:.13em; text-transform:uppercase;
+            color:var(--dim); display:flex; align-items:center; gap:5px; margin-bottom:3px; }
+  .cell__k::before{ content:"◆"; color:var(--faint); font-size:8px; }
+  .cell__v{ font-size:14px; color:var(--ink); line-height:1.25; }
+  .cell__v small{ display:block; font-size:11px; color:var(--dim); margin-top:1px; }
+  .creditnote{ font-size:11.5px; line-height:1.5; color:var(--dim); margin:0; }
+  .creditnote .glow{ color:var(--chartreuse); }
+
+  /* macron chip — the Te Reo detail, shown the way the device draws it */
+  .macron{ position:relative; color:var(--ink); }
+  .macron .bar{ position:absolute; left:50%; transform:translateX(-50%); top:-.16em;
+                width:.62em; height:1.6px; background:var(--ink); }
+
+  /* ── back face: setup + thanks ── */
+  .steps{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:11px; }
+  .steps li{ display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:start; }
+  .steps .n{ font-family:var(--mono); font-size:11px; color:var(--bg);
+             background:var(--phosphor); width:18px; height:18px; border-radius:3px;
+             display:grid; place-items:center; margin-top:1px; font-weight:600; }
+  .steps .t{ font-size:13px; line-height:1.42; color:var(--ink); }
+  .steps .t b{ font-family:var(--mono); font-weight:600; color:var(--chartreuse); letter-spacing:.02em;
+               background:rgba(212,232,138,.09); padding:1px 5px; border-radius:3px; }
+  .later{ font-size:11.5px; line-height:1.5; color:var(--dim); margin:2px 0 0; }
+
+  .thanks{ font-size:13.5px; line-height:1.55; color:var(--ink); margin:0; max-width:40ch; }
+  .signoff{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .signoff .mark{ font-family:var(--mono); font-weight:600; letter-spacing:.14em; color:var(--phosphor); font-size:13px; }
+  .signoff .made{ font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); }
+
+  .hd{ font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--phosphor); margin:0; }
+
+  .spacer{ flex:1 1 auto; }
+  .rule{ height:1px; background:var(--edge-dim); border:0; margin:0; }
+
+  @media (max-width:400px){ .cells{ grid-template-columns:1fr; } }
+
+  @media print{
+    .stage{ background:#fff; padding:0; gap:0; }
+    .stage__lead,.face__cap{ display:none; }
+    .face{ margin:0; page-break-after:always; }
+    .card{ width:118mm; height:118mm; aspect-ratio:auto; box-shadow:none; border-radius:0; }
+  }
+</style>
+
+<div class="stage">
+  <p class="stage__lead">Box insert &middot; <b>square, prints double-sided</b></p>
+
+  <!-- ══════════════ FRONT ══════════════ -->
+  <div class="face">
+    <div class="card">
+      <svg class="rings" width="240" height="240" viewBox="0 0 240 240" style="top:-70px;right:-70px" aria-hidden="true">
+        <g fill="none" stroke="#7fd69a">
+          <circle cx="170" cy="70" r="40" stroke-opacity=".22"/>
+          <circle cx="170" cy="70" r="66" stroke-opacity=".13"/>
+          <circle cx="170" cy="70" r="94" stroke-opacity=".07"/>
+          <circle cx="170" cy="70" r="124" stroke-opacity=".04"/>
+        </g>
+      </svg>
+
+      <div class="eyebrow"><span class="dot"></span>Live earthquake monitor</div>
+      <div class="spacer" style="max-height:14px"></div>
+      <h1 class="wordmark">SEISMONITOR</h1>
+      <p class="tagline">A small, live window on the restless earth. <span class="soft">It plots every quake on a real map — or a slowly turning globe — the moment it is reported, and lights up the whole screen when the ground moves in earnest.</span></p>
+
+      <svg class="trace" viewBox="0 0 640 40" preserveAspectRatio="none" aria-hidden="true">
+        <polyline fill="none" stroke="#7fd69a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"
+          points="0,20 40,21 78,19 110,22 150,20 188,18 214,23 236,15 250,28 262,7 274,33 286,10 298,26 312,20 344,19 380,21 410,20 452,22 492,19 536,21 582,20 640,20"/>
+      </svg>
+
+      <div class="cells">
+        <div>
+          <div class="cell__k">Aotearoa NZ</div>
+          <div class="cell__v">GeoNet<small>geonet.org.nz</small></div>
+        </div>
+        <div>
+          <div class="cell__k">Worldwide</div>
+          <div class="cell__v">USGS<small>earthquake.usgs.gov</small></div>
+        </div>
+      </div>
+      <div class="spacer" style="max-height:14px"></div>
+      <p class="creditnote">Every tremor shown is real seismic data, freely shared by these agencies. Māori place names appear with their <span class="glow">macrons</span> restored — Taup<span class="macron">o<span class="bar"></span></span>, not Taupo — the way they are meant to be written.</p>
+    </div>
+    <div class="face__cap">Front</div>
+  </div>
+
+  <!-- ══════════════ BACK ══════════════ -->
+  <div class="face">
+    <div class="card">
+      <div class="eyebrow"><span class="dot"></span>Set up in under a minute</div>
+      <div class="spacer" style="max-height:12px"></div>
+
+      <ol class="steps">
+        <li><span class="n">1</span><span class="t">Plug SeisMonitor in. It will start looking for a network.</span></li>
+        <li><span class="n">2</span><span class="t">On your phone, open Wi-Fi settings and join <b>SeisMonitor-Setup</b>.</span></li>
+        <li><span class="n">3</span><span class="t">Open a browser to <b>192.168.4.1</b>.</span></li>
+        <li><span class="n">4</span><span class="t">Choose your home Wi-Fi, enter the password, and pick your region.</span></li>
+        <li><span class="n">5</span><span class="t">Done. SeisMonitor connects and begins watching the ground.</span></li>
+      </ol>
+      <p class="later">To change network or region later, tap the gear on screen — no reset needed.</p>
+
+      <div class="spacer"></div>
+      <hr class="rule"/>
+      <div class="spacer" style="max-height:14px"></div>
+
+      <p class="hd">Thank you</p>
+      <p class="thanks">Thank you for giving SeisMonitor a place on your desk. Everything it shows is really happening — reported by the world's seismic networks as it happens. We hope it keeps you a little more connected to the ground beneath your feet.</p>
+
+      <div class="spacer" style="max-height:16px"></div>
+      <div class="signoff">
+        <span class="mark">SEISMONITOR</span>
+        <span class="made">Made with care in Aotearoa NZ</span>
+      </div>
+    </div>
+    <div class="face__cap">Back</div>
+  </div>
+</div>
