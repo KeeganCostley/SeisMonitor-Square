@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.6-portal", 8, 228, 1);
+    tft.drawString("v8.7-patient", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -803,13 +803,22 @@ void setup() {
   }
   
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);                                  // modem sleep off — steadier on flaky APs/hotspots
   WiFi.begin(config.wifiSSID, config.wifiPassword);
 
+  // Try for ~45s (was 20s) and RE-ISSUE the join every ~12s. A phone hotspot often isn't broadcasting
+  // the instant the device reboots — it wakes when something looks for it — so the extra time + retries
+  // give it a chance to appear before we fall back to the setup portal.
   int frame = 0;
-  while (WiFi.status() != WL_CONNECTED && frame < 200) {   // animated, ~20s
+  while (WiFi.status() != WL_CONNECTED && frame < 450) {   // animated, ~45s
     drawLoadingScreen("CONNECTING TO WIFI", frame);
     delay(100);
     frame++;
+    if (frame % 120 == 0) {                              // ~every 12s, kick the join again
+      WiFi.disconnect();
+      delay(80);
+      WiFi.begin(config.wifiSSID, config.wifiPassword);
+    }
   }
 
   if (WiFi.status() != WL_CONNECTED) {
