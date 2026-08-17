@@ -664,6 +664,7 @@ bool readTouch(int16_t &x, int16_t &y);
 void mapTouch(int16_t tx, int16_t ty, int16_t &sx, int16_t &sy);
 void setupWebServer();
 void scanWifiNetworks();
+void pollWifiScan();
 void handleWifiRescan();
 void handleWebRoot();
 void handleWebSave();
@@ -724,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v8.4-demo", 8, 228, 1);
+    tft.drawString("v8.5-hotspot", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -861,6 +862,7 @@ void loop() {
   
   if (isConfigMode) {
     dnsServer.processNextRequest();
+    pollWifiScan();                              // keep the network list fresh (catches a hotspot you switch on)
     if (configOnDemand) {                        // on-demand setup offers a Cancel (boot setup does not)
       int16_t tx, ty;
       if (readTouch(tx, ty)) {
@@ -3855,9 +3857,11 @@ void drawSetupScreen(bool onDemand) {
 String g_scanSSID[MAX_WIFI_SCAN];
 int    g_scanRSSI[MAX_WIFI_SCAN];
 int    g_scanCount = 0;
+unsigned long g_lastScanMs = 0;      // when the last scan kicked off (paces the background rescans)
+bool   g_scanning = false;           // an async scan is in flight
 
-void scanWifiNetworks() {
-  int n = WiFi.scanNetworks();                     // blocking (~2-5s); needs AP_STA mode (set in setupConfigPortal)
+// Copy a finished scan's results into the cache (deduped, hidden networks skipped).
+static void collectScanResults(int n) {
   g_scanCount = 0;
   for (int i = 0; i < n && g_scanCount < MAX_WIFI_SCAN; i++) {
     String s = WiFi.SSID(i);
@@ -3871,6 +3875,30 @@ void scanWifiNetworks() {
   }
   WiFi.scanDelete();                               // free the scan buffer
   Serial.printf("[wifi] scan found %d networks\n", g_scanCount);
+}
+
+// Blocking scan — used once at setup entry (before anyone's connected, so the pause doesn't matter).
+void scanWifiNetworks() {
+  collectScanResults(WiFi.scanNetworks());         // blocking (~2-5s); needs AP_STA mode
+  g_lastScanMs = millis();
+}
+
+// Keep the list fresh while setup is open, so a network switched on LATER (e.g. an iPhone hotspot you
+// enable after opening the portal) shows up without a restart. Uses an ASYNC scan so the web server
+// stays responsive; re-scans every ~10s. Called from loop() while in config mode.
+void pollWifiScan() {
+  if (g_scanning) {
+    int n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING) return;            // -1, still going
+    if (n >= 0) collectScanResults(n);
+    g_scanning = false;                            // done or failed (-2) — either way, arm the next one
+    g_lastScanMs = millis();
+    return;
+  }
+  if (millis() - g_lastScanMs > 10000) {           // ~10s between background sweeps
+    WiFi.scanNetworks(true, false);                // async (non-blocking)
+    g_scanning = true;
+  }
 }
 
 void setupConfigPortal() {
@@ -3912,7 +3940,8 @@ void exitWifiSetup() {
 }
 
 void handleWifiRescan() {
-  scanWifiNetworks();     // re-scan (briefly disturbs the AP), then re-render the form with the fresh list
+  // Just re-render — a background scan (pollWifiScan) refreshes the list every ~10s, so the cache is
+  // already current. No blocking scan here, so tapping Rescan is instant and doesn't disturb the AP.
   handleWebRoot();
 }
 
@@ -3940,7 +3969,7 @@ void handleWebRoot() {
   }
   html += R"(</select><input id="ssid" name="ssid" placeholder="or type a network name" value=")";
   html += config.wifiSSID;
-  html += R"(" required><a href="/rescan" style="display:inline-block;margin-top:8px;color:#88C8B0;font-size:13px;text-decoration:none">&#8635; Rescan networks</a><label>WiFi Password</label><input type="password" name="password" value=")";
+  html += R"(" required><a href="/rescan" style="display:inline-block;margin-top:8px;color:#88C8B0;font-size:13px;text-decoration:none">&#8635; Rescan networks</a><p style="margin:6px 0 0;font-size:12px;color:#777;line-height:1.4">Using a phone hotspot? Turn it on now &mdash; the list keeps refreshing every few seconds. Give it a moment, then tap Rescan and it&rsquo;ll appear.</p><label>WiFi Password</label><input type="password" name="password" value=")";
   html += config.wifiPassword;
   html += R"("><label>Region</label><select name="region"><option value="NZ")";
   if (strcmp(config.region, "NZ") == 0) html += " selected";
