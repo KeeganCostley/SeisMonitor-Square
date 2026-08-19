@@ -52,8 +52,27 @@ def span(pts):
     xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
     return math.hypot(max(xs) - min(xs), max(ys) - min(ys))
 
+# Islands that matter to the NZ/Pacific market but are too small to appear in the 1:50m coastline source
+# (Tonga, Niue). Hand-placed as a tiny diamond so they at least show up in the right spot. Add more here
+# — (name, lat, lon) — for any other must-have island the dataset misses.
+EXTRA_ISLANDS = [
+    ("Tonga", -21.15, -175.20),
+    ("Niue",  -19.05, -169.90),
+]
+def diamond(lat, lon, r=0.45):
+    return [(lon, lat - r), (lon + r, lat), (lon, lat + r), (lon - r, lat), (lon, lat - r)]  # [lon,lat] ring
+
 def mean_abs_lat(pts):
     return sum(abs(p[1]) for p in pts) / len(pts)
+
+# The device's first market is New Zealand, so the SW/central Pacific gets a relaxed island threshold —
+# Fiji, Vanuatu, New Caledonia, Samoa, Tonga, Cook Is., Solomon Is. survive even though they're tiny.
+# (lon >= 150E or <= 130W handles the dateline; lat -35..20 = tropical/subtropical Pacific, north of NZ.)
+def in_pacific(pts):
+    for lon, lat in pts:
+        if -35 <= lat <= 20 and (lon >= 150 or lon <= -130):
+            return True
+    return False
 
 def main():
     src, out = sys.argv[1], sys.argv[2]
@@ -61,6 +80,7 @@ def main():
     min_span  = float(sys.argv[4]) if len(sys.argv) > 4 else 2.2
     min_pts   = int(sys.argv[5])   if len(sys.argv) > 5 else 3
     cos_floor = float(sys.argv[6]) if len(sys.argv) > 6 else 0.22   # ~cos(77deg): cap how hard poles thin
+    pac_span  = float(sys.argv[7]) if len(sys.argv) > 7 else 0.6    # relaxed island threshold in the Pacific
 
     d = json.load(open(src, encoding='utf-8'))
     feats = []
@@ -70,12 +90,16 @@ def main():
             if len(pts) < 2:
                 continue
             eff_span = span(pts) * math.cos(math.radians(mean_abs_lat(pts)))   # SCREEN span, not raw
-            if eff_span < min_span:
+            thresh = pac_span if in_pacific(pts) else min_span                 # Pacific gets extra detail
+            if eff_span < thresh:
                 continue
             s = dp(pts, base_tol, cos_floor)
             if len(s) < min_pts:
                 continue
             feats.append(s)
+
+    for name, lat, lon in EXTRA_ISLANDS:        # hand-placed marks for dataset-missing islands
+        feats.append(diamond(lat, lon))
 
     feats.sort(key=lambda s: -span(s))          # biggest landmasses first
     total = sum(len(s) for s in feats)
