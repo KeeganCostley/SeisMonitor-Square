@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.0-pacific", 8, 228, 1);
+    tft.drawString("v9.1-radar", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2982,15 +2982,14 @@ void fetchTask(void*) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Framed in a soft green border so it reads as part of the monitor, not a different product: everything
 // is the theme green EXCEPT the magnitude number, which alone takes the depth-aware severity colour.
-const int ALERT_OX = 20, ALERT_OY = 220;     // ring origin — bottom-left, inside the border
-const int ALERT_RIGHT = 300;                 // right anchor, pulled in so content clears the frame
-const int ALERT_PLACE_MAXW = 280;            // a place line runs from the right anchor to ~x20 before wrapping
-const int ALERT_MAXR = 350;                  // reaches the far corner; rings are clipped inside the frame
-const int ALERT_RING_N = 4, ALERT_RING_STEP = 4;   // slower now (was 8) — a calm pulse, not a fast burst
-const int ALERT_VP_X = 8, ALERT_VP_Y = 8, ALERT_VP_W = 304, ALERT_VP_H = 224;   // ring clip = inside the frame
-static int      alertRingPhase = 0;
-static uint16_t alertColor     = 0;          // severity colour — used ONLY for the magnitude number
-static EarthquakeData alertQuake;            // the one quake on screen — re-drawn on top of the rings each frame
+const int ALERT_CX = 160, ALERT_CY = 104;              // radar centre
+const int ALERT_R1 = 20, ALERT_R2 = 35, ALERT_R3 = 50; // static concentric rings (the map's distance-ring style)
+const int ALERT_PULSE_LO = 16, ALERT_PULSE_HI = 52;    // one pulse ring expands LO->HI through them, fading
+const int ALERT_MAG_BASEY = 119;                       // magnitude baseline — centres the number on the rings
+const int ALERT_PLACE_MAXW = 280;                      // a centred place line wraps beyond this width
+static int      alertPulseR = ALERT_PULSE_LO;
+static uint16_t alertColor  = 0;                       // severity colour — the magnitude number ONLY
+static EarthquakeData alertQuake;                      // the one quake on screen
 
 // Draw the frame that ties the alert to the monitor's bordered panels — SAME green (PANEL_EDGE, the dim
 // soft green), SAME thin 1px line, SAME radius 3 as drawDataPanel/drawMap/drawSeismograph. (Was a bright
@@ -3009,38 +3008,18 @@ static uint16_t dimColor(uint16_t c, int num, int den) {
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-// Right-anchored text, redrawn on top of the rings each frame. The glyphs are opaque and land in the
-// SAME place every frame, so redrawing them over themselves is pixel-identical → no flicker (unlike a
-// fillRect-then-redraw, which would blank the hero magnitude 18×/second). Rings pass behind: where a
-// ring crossed a glyph, this repaints it; ring specks left in the glyphs' negative space are cleared
-// by the erase step on the next frame. Text sits on the flat black fill from displayEarthquakeAlert.
-static void alertText(const char* s, int rightX, int baseY, const GFXfont* f, uint16_t col) {
+// Centred GFX-font text (baseline at baseY).
+static void alertTextC(const char* s, int baseY, const GFXfont* f, uint16_t col) {
   tft.setFreeFont(f);
   tft.setTextColor(col);
-  tft.setCursor(rightX - tft.textWidth(s), baseY);
+  tft.setCursor(ALERT_CX - tft.textWidth(s) / 2, baseY);
   tft.print(s);
 }
 
-// Right-anchored text in the BUILT-IN pixel font — the same font the main screen's header and meta use,
-// so the alert reads as the same instrument rather than a different product. Note built-in fonts position
-// from the cursor's TOP-left (GFX fonts use the baseline), so topY is the top of the glyph cell.
-// (This also replaced a hand-rolled letter-spacing loop that measured each glyph with textWidth(): for a
-// single space TFT_eSPI returns 0, not the advance, so every space collapsed — "27MAGO-17KMDEEP".)
-static void alertTextPixel(const char* s, int rightX, int topY, uint8_t size, uint16_t col) {
-  tft.setTextFont(1);
-  tft.setTextSize(size);
-  tft.setTextColor(col);
-  tft.setCursor(rightX - tft.textWidth(s), topY);
-  tft.print(s);
-  tft.setTextSize(1);                                // restore the global size for everything else
-}
-
-// One place line: right-anchored SeisPlace22, with Māori macron bars restored above the flagged vowels
-// (mac[] is aligned to s). Colour is `ink` — the place name is the calm readable element.
-static void alertPlaceLine(const char* s, const bool* mac, int rightX, int baseY) {
+// One centred place line (SeisPlace22) with Māori macron bars restored above the flagged vowels.
+static void alertPlaceC(const char* s, const bool* mac, int baseY) {
   tft.setFreeFont(&SeisPlace22);
-  int w = tft.textWidth(s);
-  int x = rightX - w;
+  int x = ALERT_CX - tft.textWidth(s) / 2;
   tft.setTextColor(currentTheme.textPrimary);
   tft.setCursor(x, baseY);
   tft.print(s);
@@ -3055,21 +3034,76 @@ static void alertPlaceLine(const char* s, const bool* mac, int rightX, int baseY
   }
 }
 
-// All the text of the alert, redrawn on top of the rings every frame. Computes the place wrap first
-// (1 line, or 2 when a long USGS name won't fit) and lifts the magnitude up when it's two lines.
-static void drawAlertContent() {
-  EarthquakeData* q = &alertQuake;
-  uint16_t green = currentTheme.textAccent;    // everything is the theme green...
-  uint16_t sev   = alertColor;                 // ...except the magnitude number (severity colour)
+// Region name for the ◆ label above the magnitude.
+static const char* alertRegionName() {
+  if (!strcmp(config.region, "NZ"))         return "AOTEAROA NZ";
+  if (!strcmp(config.region, "Japan"))      return "JAPAN";
+  if (!strcmp(config.region, "California")) return "CALIFORNIA";
+  if (!strcmp(config.region, "China"))      return "CHINA";
+  return "GLOBAL";
+}
 
-  // Place name → demacron → wrap to at most two right-anchored lines (never shrink; wrap instead).
+// ◆ + centred label in the built-in pixel font (the main screen's data-cell language), centred on cy.
+static void alertDiamondLabel(const char* s, int cy, uint16_t col) {
+  tft.setTextFont(1); tft.setTextSize(1);
+  int tw = tft.textWidth(s);
+  int x  = ALERT_CX - (tw + 10) / 2;
+  int dx = x + 2, dy = cy + 1;
+  tft.fillTriangle(dx, dy - 3, dx + 3, dy, dx, dy + 3, col);      // small ◆
+  tft.fillTriangle(dx, dy - 3, dx - 3, dy, dx, dy + 3, col);
+  tft.setTextColor(col);
+  tft.setCursor(x + 10, cy - 2);
+  tft.print(s);
+}
+
+// The 3 static concentric rings — the same faint distance-ring look as the map. Redrawn each frame so
+// the sweeping pulse doesn't erase them.
+static void drawAlertRings() {
+  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R1, currentTheme.ring4);
+  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R2, currentTheme.ring3);
+  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R3, currentTheme.ring2);
+}
+
+// The magnitude — the ONE splash of severity colour, centred on the rings. Redrawn each frame so the
+// pulse passes BEHIND it (opaque glyphs land in the same place → no flicker).
+static void drawAlertMag() {
+  char m[10]; snprintf(m, sizeof(m), "M%.1f", alertQuake.magnitude);
+  alertTextC(m, ALERT_MAG_BASEY, &SeisMag, alertColor);
+}
+
+// The whole alert EXCEPT the moving pulse — drawn once when it opens. Centred, symmetric, and built from
+// the main screen's own atoms (◉ header + hairline, ◆ label, distance rings, data-cell type) so it reads
+// as the same instrument, not a different screen.
+static void drawAlertStatic() {
+  EarthquakeData* q = &alertQuake;
+  uint16_t green = currentTheme.textAccent;
+
+  // Header: ◉ SEISMIC ACTIVITY DETECTED, centred, with a hairline divider — like the main screen header.
+  const char* h = "SEISMIC ACTIVITY DETECTED";
+  tft.setTextFont(1); tft.setTextSize(1);
+  int hw = tft.textWidth(h);
+  int hx = ALERT_CX - hw / 2;
+  tft.fillCircle(hx - 9, 16, 2, green); tft.drawCircle(hx - 9, 16, 3, green);   // ◉ mark
+  tft.setTextColor(green);
+  tft.setCursor(hx, 13);
+  tft.print(h);
+  tft.drawFastHLine(48, 28, 224, PANEL_EDGE);
+
+  // ◆ region label, above the rings.
+  alertDiamondLabel(alertRegionName(), 42, currentTheme.textSecondary);
+
+  // Static rings + the magnitude centred on them.
+  drawAlertRings();
+  drawAlertMag();
+
+  // Place name — one line, or two balanced lines — centred below the rings.
   char buf[96]; bool mac[96];
   int len = demacron(q->location, buf, mac, sizeof(buf));
   tft.setFreeFont(&SeisPlace22);
   bool twoLine = tft.textWidth(buf) > ALERT_PLACE_MAXW;
   int split = -1;
-  if (twoLine) {                       // pick the space split that best balances the two lines
-    int bestScore = 1 << 30;
+  if (twoLine) {
+    int best = 1 << 30;
     for (int i = 1; i < len; i++) {
       if (buf[i] != ' ') continue;
       char a[96], b[96];
@@ -3078,37 +3112,23 @@ static void drawAlertContent() {
       int w1 = tft.textWidth(a), w2 = tft.textWidth(b);
       int over = (w1 > ALERT_PLACE_MAXW ? w1 - ALERT_PLACE_MAXW : 0) +
                  (w2 > ALERT_PLACE_MAXW ? w2 - ALERT_PLACE_MAXW : 0);
-      int score = over * 1000 + (w1 > w2 ? w1 - w2 : w2 - w1);   // fit first, then balance
-      if (score < bestScore) { bestScore = score; split = i; }
+      int sc = over * 1000 + (w1 > w2 ? w1 - w2 : w2 - w1);
+      if (sc < best) { best = sc; split = i; }
     }
-    if (split < 0) twoLine = false;    // single unbreakable token — let it run full-width on one line
+    if (split < 0) twoLine = false;
   }
-
-  // Header — the main screen's pixel font, scaled 2x, so both screens share a type family.
-  alertTextPixel("SEISMIC ACTIVITY", ALERT_RIGHT, 16, 2, green);
-  alertTextPixel("DETECTED",         ALERT_RIGHT, 34, 2, green);
-
-  // Magnitude hero — the ONE splash of severity colour. Lifted up when the place wraps to two lines.
-  char magStr[10]; snprintf(magStr, sizeof(magStr), "M%.1f", q->magnitude);
-  int magBaseY = twoLine ? 154 : 176;
-  alertText(magStr, ALERT_RIGHT, magBaseY, &SeisMag, sev);
-
-  // Place — one line, or two balanced lines (drawn in `ink`, the calm readable green).
   if (!twoLine) {
-    alertPlaceLine(buf, mac, ALERT_RIGHT, 204);
+    alertPlaceC(buf, mac, 190);
   } else {
     char a[96]; bool ma[96];
     strncpy(a, buf, split); a[split] = '\0';
     for (int i = 0; i < split; i++) ma[i] = mac[i];
-    const char* b = buf + split + 1;
-    const bool* mb = mac + split + 1;
-    alertPlaceLine(a, ma, ALERT_RIGHT, 184);
-    alertPlaceLine(b, mb, ALERT_RIGHT, 206);
+    alertPlaceC(a, ma, 182);
+    alertPlaceC(buf + split + 1, mac + split + 1, 204);
   }
 
-  // How long ago — honest, not a blanket "NOW". USGS often publishes a quake many minutes (sometimes
-  // hours) after it happens, so "NOW" was a lie for most alerts; only say NOW when it genuinely is recent.
-  // (Hyphen, not the design's middot: these ASCII GFX fonts have no 0xB7 glyph.)
+  // Meta — honest age + depth, centred, dim green. Only says NOW when genuinely recent (agencies publish
+  // late), else the real age like the main screen.
   char meta[48];
   time_t nowt = time(nullptr);
   unsigned long ts = q->timestamp;
@@ -3118,35 +3138,26 @@ static void drawAlertContent() {
     String ago = getTimeAgo(ts); ago.toUpperCase();
     snprintf(meta, sizeof(meta), "%s AGO - %dKM DEEP", ago.c_str(), (int)q->depth);
   }
-  // Same pixel font as the main screen's meta, but 2x — the age has twice been misread as "just now",
-  // and this is a takeover screen with room to spare, so it should be legible at a glance.
-  alertTextPixel(meta, ALERT_RIGHT, 216, 2, currentTheme.textSecondary);
+  tft.setTextFont(1); tft.setTextSize(1);
+  tft.setTextColor(currentTheme.textSecondary);
+  tft.setCursor(ALERT_CX - tft.textWidth(meta) / 2, twoLine ? 220 : 214);
+  tft.print(meta);
 }
 
-// One animation frame: erase the old ring arcs, step the phase out, redraw them fading as they go,
-// then repaint the content on top (rings pass behind the text). Rings are GREEN now and clipped to
-// inside the frame (setViewport, absolute coords) so they never paint over the border. Driven from
-// loop() every ~55ms.
+// One animation frame: sweep the single pulse ring outward through the static rings, fading as it goes,
+// with the magnitude staying on top. The pulse stays within the ring band, clear of the labels, so only
+// the rings + magnitude need repainting — everything else was drawn once by drawAlertStatic().
 void animateAlertRings() {
-  uint16_t ringCol = currentTheme.textSecondary;     // dim green — echoes the map's faint distance rings
-  const int gap = ALERT_MAXR / ALERT_RING_N;
-  tft.setViewport(ALERT_VP_X, ALERT_VP_Y, ALERT_VP_W, ALERT_VP_H, false);   // false = keep absolute coords
-  for (int k = 0; k < ALERT_RING_N; k++) {           // erase where each ring was (both px of the 2px stroke)
-    int r = (alertRingPhase + k * gap) % ALERT_MAXR;
-    if (r > 1) { tft.drawCircle(ALERT_OX, ALERT_OY, r, currentTheme.background);
-                 tft.drawCircle(ALERT_OX, ALERT_OY, r + 1, currentTheme.background); }
-  }
-  alertRingPhase = (alertRingPhase + ALERT_RING_STEP) % ALERT_MAXR;
-  for (int k = 0; k < ALERT_RING_N; k++) {           // redraw, brighter near the origin, fading outward
-    int r = (alertRingPhase + k * gap) % ALERT_MAXR;
-    if (r <= 1) continue;
-    uint16_t c = dimColor(ringCol, ALERT_MAXR - r, ALERT_MAXR);
-    tft.drawCircle(ALERT_OX, ALERT_OY, r, c);
-    tft.drawCircle(ALERT_OX, ALERT_OY, r + 1, c);    // 2px stroke
-  }
-  tft.fillCircle(ALERT_OX, ALERT_OY, 2, currentTheme.textAccent);   // small brighter origin core (focal point)
-  tft.resetViewport();
-  drawAlertContent();                                // text always on top, crisp, over the full screen
+  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR, currentTheme.background);       // erase the old pulse (2px)
+  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR + 1, currentTheme.background);
+  drawAlertRings();                                                               // restore any static ring it crossed
+  alertPulseR += 2;
+  if (alertPulseR > ALERT_PULSE_HI) alertPulseR = ALERT_PULSE_LO;                 // loop the sweep
+  int span = ALERT_PULSE_HI - ALERT_PULSE_LO, prog = alertPulseR - ALERT_PULSE_LO;
+  uint16_t c = dimColor(currentTheme.textAccent, span - prog, span);             // bright at the centre, fading out
+  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR, c);
+  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR + 1, c);
+  drawAlertMag();                                                                 // magnitude on top — pulse behind
 }
 
 void displayEarthquakeAlert(EarthquakeData* quake) {
@@ -3154,11 +3165,11 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   alertStartTime = millis();
   alertQuake     = *quake;
   alertColor     = severityColor(quake->magnitude, quake->depth, quake->mmi);   // GeoNet MMI if we have it, else depth estimate
-  alertRingPhase = 0;
+  alertPulseR    = ALERT_PULSE_LO;
 
   tft.fillScreen(currentTheme.background);
-  drawAlertFrame();                                  // green frame (drawn once; rings are clipped inside it)
-  drawAlertContent();                                // paint content immediately; loop() adds the rings
+  drawAlertFrame();                                  // green frame, matching the monitor's panels
+  drawAlertStatic();                                 // header, rings, magnitude, place, meta — once; loop() sweeps the pulse
 }
 
 // Preview the alert on demand (seismograph tap) — cycles one demo quake per severity tier plus a
