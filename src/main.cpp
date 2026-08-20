@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.1-radar", 8, 228, 1);
+    tft.drawString("v9.2-burst", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2982,12 +2982,12 @@ void fetchTask(void*) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Framed in a soft green border so it reads as part of the monitor, not a different product: everything
 // is the theme green EXCEPT the magnitude number, which alone takes the depth-aware severity colour.
-const int ALERT_CX = 160, ALERT_CY = 104;              // radar centre
-const int ALERT_R1 = 20, ALERT_R2 = 35, ALERT_R3 = 50; // static concentric rings (the map's distance-ring style)
-const int ALERT_PULSE_LO = 16, ALERT_PULSE_HI = 52;    // one pulse ring expands LO->HI through them, fading
-const int ALERT_MAG_BASEY = 119;                       // magnitude baseline — centres the number on the rings
+const int ALERT_CX = 160, ALERT_CY = 120;              // burst centre (the epicentre = the magnitude)
+const int ALERT_MAXR = 210;                            // rings radiate to the far corners — over the WHOLE screen
+const int ALERT_RING_N = 4, ALERT_RING_STEP = 4;       // concentric rings, calm sweep speed
+const int ALERT_MAG_BASEY = 135;                       // magnitude baseline — centres the number on the burst
 const int ALERT_PLACE_MAXW = 280;                      // a centred place line wraps beyond this width
-static int      alertPulseR = ALERT_PULSE_LO;
+static int      alertRingPhase = 0;
 static uint16_t alertColor  = 0;                       // severity colour — the magnitude number ONLY
 static EarthquakeData alertQuake;                      // the one quake on screen
 
@@ -3056,25 +3056,17 @@ static void alertDiamondLabel(const char* s, int cy, uint16_t col) {
   tft.print(s);
 }
 
-// The 3 static concentric rings — the same faint distance-ring look as the map. Redrawn each frame so
-// the sweeping pulse doesn't erase them.
-static void drawAlertRings() {
-  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R1, currentTheme.ring4);
-  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R2, currentTheme.ring3);
-  tft.drawCircle(ALERT_CX, ALERT_CY, ALERT_R3, currentTheme.ring2);
-}
-
-// The magnitude — the ONE splash of severity colour, centred on the rings. Redrawn each frame so the
-// pulse passes BEHIND it (opaque glyphs land in the same place → no flicker).
+// The magnitude — the ONE splash of severity colour, centred on the burst. Redrawn each frame so the
+// rings pass BEHIND it (opaque glyphs land in the same place → no flicker).
 static void drawAlertMag() {
   char m[10]; snprintf(m, sizeof(m), "M%.1f", alertQuake.magnitude);
   alertTextC(m, ALERT_MAG_BASEY, &SeisMag, alertColor);
 }
 
-// The whole alert EXCEPT the moving pulse — drawn once when it opens. Centred, symmetric, and built from
-// the main screen's own atoms (◉ header + hairline, ◆ label, distance rings, data-cell type) so it reads
-// as the same instrument, not a different screen.
-static void drawAlertStatic() {
+// All the alert's content — redrawn on top of the radiating rings EVERY frame (opaque glyphs land in the
+// same place → no flicker; the rings sweep behind). Centred and symmetric, built from the main screen's
+// own atoms (◉ header + hairline, ◆ label, data-cell type) so it reads as the same instrument.
+static void drawAlertContent() {
   EarthquakeData* q = &alertQuake;
   uint16_t green = currentTheme.textAccent;
 
@@ -3092,8 +3084,7 @@ static void drawAlertStatic() {
   // ◆ region label, above the rings.
   alertDiamondLabel(alertRegionName(), 42, currentTheme.textSecondary);
 
-  // Static rings + the magnitude centred on them.
-  drawAlertRings();
+  // The magnitude, centred on the burst.
   drawAlertMag();
 
   // Place name — one line, or two balanced lines — centred below the rings.
@@ -3144,20 +3135,28 @@ static void drawAlertStatic() {
   tft.print(meta);
 }
 
-// One animation frame: sweep the single pulse ring outward through the static rings, fading as it goes,
-// with the magnitude staying on top. The pulse stays within the ring band, clear of the labels, so only
-// the rings + magnitude need repainting — everything else was drawn once by drawAlertStatic().
+// One animation frame: erase the old ring arcs, step them outward, redraw them radiating from the centre
+// across the WHOLE screen — bright at the epicentre, fading but still ≥25% at the edge so they carry all
+// the way out — then repaint the content on top so the rings sweep BEHIND it. Rings are clipped inside
+// the frame (setViewport, absolute coords) so they never nibble the border. Driven from loop() every ~55ms.
 void animateAlertRings() {
-  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR, currentTheme.background);       // erase the old pulse (2px)
-  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR + 1, currentTheme.background);
-  drawAlertRings();                                                               // restore any static ring it crossed
-  alertPulseR += 2;
-  if (alertPulseR > ALERT_PULSE_HI) alertPulseR = ALERT_PULSE_LO;                 // loop the sweep
-  int span = ALERT_PULSE_HI - ALERT_PULSE_LO, prog = alertPulseR - ALERT_PULSE_LO;
-  uint16_t c = dimColor(currentTheme.textAccent, span - prog, span);             // bright at the centre, fading out
-  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR, c);
-  tft.drawCircle(ALERT_CX, ALERT_CY, alertPulseR + 1, c);
-  drawAlertMag();                                                                 // magnitude on top — pulse behind
+  const int gap = ALERT_MAXR / ALERT_RING_N;
+  tft.setViewport(6, 6, 308, 224, false);                  // clip inside the frame; false = absolute coords
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // erase where each ring was (2px stroke)
+    int r = (alertRingPhase + k * gap) % ALERT_MAXR;
+    if (r > 1) { tft.drawCircle(ALERT_CX, ALERT_CY, r, currentTheme.background);
+                 tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, currentTheme.background); }
+  }
+  alertRingPhase = (alertRingPhase + ALERT_RING_STEP) % ALERT_MAXR;
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // redraw, bright at the centre, fading outward
+    int r = (alertRingPhase + k * gap) % ALERT_MAXR;
+    if (r <= 1) continue;
+    uint16_t c = dimColor(currentTheme.textAccent, ALERT_MAXR * 4 - r * 3, ALERT_MAXR * 4);
+    tft.drawCircle(ALERT_CX, ALERT_CY, r, c);
+    tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, c);          // 2px stroke
+  }
+  tft.resetViewport();
+  drawAlertContent();                                      // all content on top — the rings sweep behind it
 }
 
 void displayEarthquakeAlert(EarthquakeData* quake) {
@@ -3165,11 +3164,11 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   alertStartTime = millis();
   alertQuake     = *quake;
   alertColor     = severityColor(quake->magnitude, quake->depth, quake->mmi);   // GeoNet MMI if we have it, else depth estimate
-  alertPulseR    = ALERT_PULSE_LO;
+  alertRingPhase = 0;
 
   tft.fillScreen(currentTheme.background);
   drawAlertFrame();                                  // green frame, matching the monitor's panels
-  drawAlertStatic();                                 // header, rings, magnitude, place, meta — once; loop() sweeps the pulse
+  drawAlertContent();                                // paint content; loop() radiates the rings behind it
 }
 
 // Preview the alert on demand (seismograph tap) — cycles one demo quake per severity tier plus a
