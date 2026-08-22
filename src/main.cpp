@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.2-burst", 8, 228, 1);
+    tft.drawString("v9.3-recon", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -830,6 +830,7 @@ void setup() {
 
   Serial.println("\nWiFi connected");
   Serial.println("IP: " + WiFi.localIP().toString());
+  WiFi.setAutoReconnect(true);   // if the AP drops, keep trying to rejoin (loop() also nudges it — see below)
 
   if (MDNS.begin("seismonitor")) {
     Serial.println("mDNS: http://seismonitor.local");
@@ -942,10 +943,20 @@ void loop() {
   // only when the state flips (and not over the alert/picker, which own the screen).
   {
     static int lastWifi = -1;
+    static unsigned long lastReconnect = 0;
     int w = (WiFi.status() == WL_CONNECTED) ? 1 : 0;
     if (w != lastWifi) {
+      int prev = lastWifi;
       lastWifi = w;
-      if (!showingAlert && !showingRegionPicker) drawHeader();
+      if (!showingAlert && !showingRegionPicker) drawHeader();   // grey the WIFI label the moment it drops
+      if (w && prev == 0) requestFetch();                        // just came back up → pull fresh data now
+    }
+    // Recover a dropped connection WITHOUT a reboot: while down, force a reconnect every ~15s (also pokes
+    // WiFi.status() out of a stale "connected" so the grey indicator is honest). Not during on-device setup.
+    if (!w && !isConfigMode && strlen(config.wifiSSID) && now - lastReconnect > 15000) {
+      lastReconnect = now;
+      Serial.println("[wifi] down — reconnecting");
+      WiFi.reconnect();
     }
   }
 
