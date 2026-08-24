@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.4-slick", 8, 228, 1);
+    tft.drawString("v9.5-group", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2993,10 +2993,10 @@ void fetchTask(void*) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Framed in a soft green border so it reads as part of the monitor, not a different product: everything
 // is the theme green EXCEPT the magnitude number, which alone takes the depth-aware severity colour.
-const int ALERT_CX = 160, ALERT_CY = 120;              // burst centre (the epicentre = the magnitude)
+const int ALERT_CX = 160, ALERT_CY = 105;              // burst centre (the epicentre = the magnitude)
 const int ALERT_MAXR = 210;                            // rings radiate to the far corners — over the WHOLE screen
 const int ALERT_RING_N = 3, ALERT_RING_STEP = 2;       // fewer rings, slow sweep — calm and deliberate
-const int ALERT_MAG_BASEY = 138;                       // magnitude baseline — centres the bigger number on the burst
+const int ALERT_MAG_BASEY = 123;                       // magnitude baseline — centres the number on the burst
 const int ALERT_PLACE_MAXW = 280;                      // a centred place line wraps beyond this width
 static int      alertRingPhase = 0;
 static uint16_t alertColor  = 0;                       // severity colour — the magnitude number ONLY
@@ -3045,26 +3045,13 @@ static void alertPlaceC(const char* s, const bool* mac, int baseY) {
   }
 }
 
-// Region name for the ◆ label above the magnitude.
+// Region name — shown BELOW the specific place, like an address narrowing to the broader area.
 static const char* alertRegionName() {
-  if (!strcmp(config.region, "NZ"))         return "AOTEAROA NZ";
+  if (!strcmp(config.region, "NZ"))         return "AOTEAROA NEW ZEALAND";
   if (!strcmp(config.region, "Japan"))      return "JAPAN";
-  if (!strcmp(config.region, "California")) return "CALIFORNIA";
+  if (!strcmp(config.region, "California")) return "CALIFORNIA, USA";
   if (!strcmp(config.region, "China"))      return "CHINA";
   return "GLOBAL";
-}
-
-// ◆ + centred label in the built-in pixel font (the main screen's data-cell language), centred on cy.
-static void alertDiamondLabel(const char* s, int cy, uint16_t col) {
-  tft.setTextFont(1); tft.setTextSize(1);
-  int tw = tft.textWidth(s);
-  int x  = ALERT_CX - (tw + 10) / 2;
-  int dx = x + 2, dy = cy + 1;
-  tft.fillTriangle(dx, dy - 3, dx + 3, dy, dx, dy + 3, col);      // small ◆
-  tft.fillTriangle(dx, dy - 3, dx - 3, dy, dx, dy + 3, col);
-  tft.setTextColor(col);
-  tft.setCursor(x + 10, cy - 2);
-  tft.print(s);
 }
 
 // The magnitude — the ONE splash of severity colour, centred on the burst. Redrawn each frame so the
@@ -3075,30 +3062,30 @@ static void drawAlertMag() {
 }
 
 // All the alert's content — redrawn on top of the radiating rings EVERY frame (opaque glyphs land in the
-// same place → no flicker; the rings sweep behind). Centred and symmetric, built from the main screen's
-// own atoms (◉ header + hairline, ◆ label, data-cell type) so it reads as the same instrument.
+// same place → no flicker; the rings sweep behind). One tight centred group narrowing from specific to
+// general: magnitude (hero) → the place → the region → age·depth. All proper Arial type (no blocky
+// built-in font) for a refined read; the ◉ header ties it to the monitor.
 static void drawAlertContent() {
   EarthquakeData* q = &alertQuake;
   uint16_t green = currentTheme.textAccent;
 
-  // Header: ◉ SEISMIC ACTIVITY DETECTED, centred, with a hairline divider — like the main screen header.
-  const char* h = "SEISMIC ACTIVITY DETECTED";
-  tft.setTextFont(1); tft.setTextSize(1);
-  int hw = tft.textWidth(h);
-  int hx = ALERT_CX - hw / 2;
-  tft.fillCircle(hx - 9, 16, 2, green); tft.drawCircle(hx - 9, 16, 3, green);   // ◉ mark
-  tft.setTextColor(green);
-  tft.setCursor(hx, 13);
-  tft.print(h);
-  tft.drawFastHLine(48, 28, 224, PANEL_EDGE);
+  // Header — ◉ SEISMIC ACTIVITY DETECTED, centred, with a hairline divider.
+  {
+    tft.setFreeFont(&SeisSans10);
+    const char* h = "SEISMIC ACTIVITY DETECTED";
+    int hw = tft.textWidth(h);
+    int hx = ALERT_CX - hw / 2;
+    tft.fillCircle(hx - 10, 14, 2, green); tft.drawCircle(hx - 10, 14, 3, green);   // ◉ mark
+    tft.setTextColor(green);
+    tft.setCursor(hx, 19);
+    tft.print(h);
+    tft.drawFastHLine(54, 28, 212, PANEL_EDGE);
+  }
 
-  // ◆ region label, above the rings.
-  alertDiamondLabel(alertRegionName(), 42, currentTheme.textSecondary);
-
-  // The magnitude, centred on the burst.
+  // Magnitude — the hero, centred on the burst.
   drawAlertMag();
 
-  // Place name — one line, or two balanced lines — centred below the rings.
+  // Place (the specific epicentre location) — one or two centred lines.
   char buf[96]; bool mac[96];
   int len = demacron(q->location, buf, mac, sizeof(buf));
   tft.setFreeFont(&SeisPlace22);
@@ -3120,30 +3107,40 @@ static void drawAlertContent() {
     if (split < 0) twoLine = false;
   }
   if (!twoLine) {
-    alertPlaceC(buf, mac, 190);
+    alertPlaceC(buf, mac, 150);
   } else {
     char a[96]; bool ma[96];
     strncpy(a, buf, split); a[split] = '\0';
     for (int i = 0; i < split; i++) ma[i] = mac[i];
-    alertPlaceC(a, ma, 182);
-    alertPlaceC(buf + split + 1, mac + split + 1, 204);
+    alertPlaceC(a, ma, 144);
+    alertPlaceC(buf + split + 1, mac + split + 1, 166);
   }
 
-  // Meta — honest age + depth, centred, dim green. Only says NOW when genuinely recent (agencies publish
-  // late), else the real age like the main screen.
-  char meta[48];
+  // Region — the broader area, BELOW the specific place, quieter (per Keegan: specific → general).
+  int regionY = twoLine ? 186 : 172;
+  alertTextC(alertRegionName(), regionY, &SeisSans8, currentTheme.textSecondary);
+
+  // Meta — how long ago • how deep, centred, dim, with a drawn dot separator. Honest age: NOW only when
+  // genuinely recent (agencies publish late), else the real age like the main screen.
+  char p1[24], p2[24];
   time_t nowt = time(nullptr);
   unsigned long ts = q->timestamp;
   if (ts == 0 || nowt < 1600000000 || ((unsigned long)nowt - ts) < 120) {
-    snprintf(meta, sizeof(meta), "NOW - %dKM DEEP", (int)q->depth);
+    strcpy(p1, "NOW");
   } else {
     String ago = getTimeAgo(ts); ago.toUpperCase();
-    snprintf(meta, sizeof(meta), "%s AGO - %dKM DEEP", ago.c_str(), (int)q->depth);
+    snprintf(p1, sizeof(p1), "%s AGO", ago.c_str());
   }
-  tft.setTextFont(1); tft.setTextSize(1);
-  tft.setTextColor(currentTheme.textSecondary);
-  tft.setCursor(ALERT_CX - tft.textWidth(meta) / 2, twoLine ? 220 : 214);
-  tft.print(meta);
+  snprintf(p2, sizeof(p2), "%dKM DEEP", (int)q->depth);
+  int metaY = twoLine ? 206 : 194;
+  tft.setFreeFont(&SeisSans8);
+  uint16_t mc = currentTheme.sub;
+  tft.setTextColor(mc);
+  int w1 = tft.textWidth(p1), w2 = tft.textWidth(p2), dg = 12;
+  int mx = ALERT_CX - (w1 + dg + w2) / 2;
+  tft.setCursor(mx, metaY); tft.print(p1);
+  tft.fillCircle(mx + w1 + dg / 2, metaY - 4, 1, mc);       // the • separator
+  tft.setCursor(mx + w1 + dg, metaY); tft.print(p2);
 }
 
 // One animation frame: erase the old ring arcs, step them outward, redraw them radiating from the centre
