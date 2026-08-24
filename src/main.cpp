@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.3-recon", 8, 228, 1);
+    tft.drawString("v9.4-slick", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -2995,8 +2995,8 @@ void fetchTask(void*) {
 // is the theme green EXCEPT the magnitude number, which alone takes the depth-aware severity colour.
 const int ALERT_CX = 160, ALERT_CY = 120;              // burst centre (the epicentre = the magnitude)
 const int ALERT_MAXR = 210;                            // rings radiate to the far corners — over the WHOLE screen
-const int ALERT_RING_N = 4, ALERT_RING_STEP = 4;       // concentric rings, calm sweep speed
-const int ALERT_MAG_BASEY = 135;                       // magnitude baseline — centres the number on the burst
+const int ALERT_RING_N = 3, ALERT_RING_STEP = 2;       // fewer rings, slow sweep — calm and deliberate
+const int ALERT_MAG_BASEY = 138;                       // magnitude baseline — centres the bigger number on the burst
 const int ALERT_PLACE_MAXW = 280;                      // a centred place line wraps beyond this width
 static int      alertRingPhase = 0;
 static uint16_t alertColor  = 0;                       // severity colour — the magnitude number ONLY
@@ -3152,19 +3152,20 @@ static void drawAlertContent() {
 // the frame (setViewport, absolute coords) so they never nibble the border. Driven from loop() every ~55ms.
 void animateAlertRings() {
   const int gap = ALERT_MAXR / ALERT_RING_N;
+  uint16_t bg = currentTheme.background;
   tft.setViewport(6, 6, 308, 224, false);                  // clip inside the frame; false = absolute coords
-  for (int k = 0; k < ALERT_RING_N; k++) {                 // erase where each ring was (2px stroke)
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // erase where each ring was — 3px hard to cover the AA fringe
     int r = (alertRingPhase + k * gap) % ALERT_MAXR;
-    if (r > 1) { tft.drawCircle(ALERT_CX, ALERT_CY, r, currentTheme.background);
-                 tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, currentTheme.background); }
+    if (r > 1) { tft.drawCircle(ALERT_CX, ALERT_CY, r - 1, bg);
+                 tft.drawCircle(ALERT_CX, ALERT_CY, r,     bg);
+                 tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, bg); }
   }
   alertRingPhase = (alertRingPhase + ALERT_RING_STEP) % ALERT_MAXR;
-  for (int k = 0; k < ALERT_RING_N; k++) {                 // redraw, bright at the centre, fading outward
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // redraw — ANTI-ALIASED, bright at the centre, dissolving out
     int r = (alertRingPhase + k * gap) % ALERT_MAXR;
     if (r <= 1) continue;
-    uint16_t c = dimColor(currentTheme.textAccent, ALERT_MAXR * 4 - r * 3, ALERT_MAXR * 4);
-    tft.drawCircle(ALERT_CX, ALERT_CY, r, c);
-    tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, c);          // 2px stroke
+    uint16_t c = dimColor(currentTheme.textAccent, ALERT_MAXR * 5 - r * 4, ALERT_MAXR * 5);   // ~20% at the edge
+    tft.drawSmoothCircle(ALERT_CX, ALERT_CY, r, c, bg);    // smooth = far slicker than a jagged 1px circle
   }
   tft.resetViewport();
   drawAlertContent();                                      // all content on top — the rings sweep behind it
