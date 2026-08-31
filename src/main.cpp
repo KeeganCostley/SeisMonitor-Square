@@ -725,7 +725,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.5-group", 8, 228, 1);
+    tft.drawString("v9.6-rings", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3151,18 +3151,18 @@ void animateAlertRings() {
   const int gap = ALERT_MAXR / ALERT_RING_N;
   uint16_t bg = currentTheme.background;
   tft.setViewport(6, 6, 308, 224, false);                  // clip inside the frame; false = absolute coords
-  for (int k = 0; k < ALERT_RING_N; k++) {                 // erase where each ring was — 3px hard to cover the AA fringe
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // erase each 2px ring EXACTLY where it was — same 2 radii we drew, so nothing lingers
     int r = (alertRingPhase + k * gap) % ALERT_MAXR;
-    if (r > 1) { tft.drawCircle(ALERT_CX, ALERT_CY, r - 1, bg);
-                 tft.drawCircle(ALERT_CX, ALERT_CY, r,     bg);
+    if (r > 1) { tft.drawCircle(ALERT_CX, ALERT_CY, r,     bg);
                  tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, bg); }
   }
   alertRingPhase = (alertRingPhase + ALERT_RING_STEP) % ALERT_MAXR;
-  for (int k = 0; k < ALERT_RING_N; k++) {                 // redraw — ANTI-ALIASED, bright at the centre, dissolving out
+  for (int k = 0; k < ALERT_RING_N; k++) {                 // redraw — plain 2px circles, bright at the centre, dissolving out
     int r = (alertRingPhase + k * gap) % ALERT_MAXR;
     if (r <= 1) continue;
     uint16_t c = dimColor(currentTheme.textAccent, ALERT_MAXR * 5 - r * 4, ALERT_MAXR * 5);   // ~20% at the edge
-    tft.drawSmoothCircle(ALERT_CX, ALERT_CY, r, c, bg);    // smooth = far slicker than a jagged 1px circle
+    tft.drawCircle(ALERT_CX, ALERT_CY, r,     c);          // hard edges erase cleanly (no AA fringe to smear) and cost far less
+    tft.drawCircle(ALERT_CX, ALERT_CY, r + 1, c);
   }
   tft.resetViewport();
   drawAlertContent();                                      // all content on top — the rings sweep behind it
