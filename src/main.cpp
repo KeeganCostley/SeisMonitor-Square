@@ -39,6 +39,7 @@
 #include "SeisMag.h"      // Arial Bold ~58px — the alert-screen magnitude hero (only '.' 0-9 'M')
 #include "SeisPlace22.h"  // Arial Bold 22px — the alert-screen place name
 #include "SeisCoast.h"    // Natural Earth 1:110m coastlines for the globe (see tools/gencoast.py)
+#include "SeisTerrain.h"  // Milford Sound elevation grid for the 3-D terrain alert (real AWS terrain data)
 #include <FS.h>
 #include <time.h>
 using namespace fs;
@@ -648,6 +649,7 @@ void fetchTask(void* param);
 void displayEarthquakeAlert(EarthquakeData* quake);
 void animateAlertRings();
 void previewAlertCycle();
+extern bool terrainAlert;                              // terrain-alert feature flag (defined below)
 void startDemo();
 void exitDemo();
 void runDemo();
@@ -725,7 +727,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v9.6-rings", 8, 228, 1);
+    tft.drawString("v10-terrain", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3148,6 +3150,7 @@ static void drawAlertContent() {
 // the way out — then repaint the content on top so the rings sweep BEHIND it. Rings are clipped inside
 // the frame (setViewport, absolute coords) so they never nibble the border. Driven from loop() every ~55ms.
 void animateAlertRings() {
+  if (terrainAlert) return;                            // terrain alert is static (Stage 1) — no rings to sweep
   const int gap = ALERT_MAXR / ALERT_RING_N;
   uint16_t bg = currentTheme.background;
   tft.setViewport(6, 6, 308, 224, false);                  // clip inside the frame; false = absolute coords
@@ -3168,12 +3171,109 @@ void animateAlertRings() {
   drawAlertContent();                                      // all content on top — the rings sweep behind it
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TERRAIN ALERT (Stage 1) — the quake's real ground as a perspective wireframe.
+// Elevation baked in flash (SeisTerrain.h, real AWS terrain data for Milford Sound). Camera + height
+// match the browser mockup (pitch 44°, 1.5× exaggeration). Hidden lines removed with a floating horizon
+// (render near→far, keep the running silhouette, skip anything behind it). Static for now — the shockwave
+// is the next stage. #terrainAlert flips the whole thing back to the old ring alert if we want it.
+// ═══════════════════════════════════════════════════════════════════════════
+bool terrainAlert = true;
+const uint16_t ALERT_AMBER = 0xFE68;   // #ffcf47 in 565 — the epicentre marker
+
+static uint16_t terrColor(float h01, float fade){    // dim green (low) → bright phosphor (high), scaled by fade
+  uint16_t lo = currentTheme.sub, hi = currentTheme.textAccent;
+  int lr=(lo>>11)&0x1F, lg=(lo>>5)&0x3F, lb=lo&0x1F, hr=(hi>>11)&0x1F, hg=(hi>>5)&0x3F, hb=hi&0x1F;
+  if(h01<0)h01=0; if(h01>1)h01=1; if(fade<0)fade=0; if(fade>1)fade=1;
+  int r=(int)((lr+(hr-lr)*h01)*fade), g=(int)((lg+(hg-lg)*h01)*fade), b=(int)((lb+(hb-lb)*h01)*fade);
+  return (uint16_t)((r<<11)|(g<<5)|b);
+}
+
+template <typename T> void drawTerrainInto(T* g){
+  const int N = TERR_N;
+  const float SP=100.0f, HS=SP/TERR_KM/1000.0f, VEX=1.5f;
+  const float peak=(TERR_MAX>0?TERR_MAX:1)*HS*VEX;
+  const float EX=(TERR_EPI_U-0.5f)*SP, EZ=(TERR_EPI_V-0.5f)*SP;
+  // camera basis (same numbers as the mockup: pitch 44°, D=90, look a touch north of the epicentre)
+  const float pit=44.0f*0.0174533f, D=90.0f, F=312.6f; const int CXs=160, CYs=120;
+  const float camx=EX, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(pit)*D, tgx=EX, tgy=5.0f, tgz=EZ-10.0f;
+  float fx=tgx-camx, fy=tgy-camy, fz=tgz-camz, fl=sqrtf(fx*fx+fy*fy+fz*fz); fx/=fl; fy/=fl; fz/=fl;
+  float rx=-fz, rz=fx, rl=sqrtf(rx*rx+rz*rz); rx/=rl; rz/=rl;                 // right = norm(cross(fwd,up))
+  const float ry=0.0f;
+  float ux=ry*fz-rz*fy, uy=rz*fx-rx*fz, uz=rx*fy-ry*fx;                       // up = cross(right,fwd)
+  #define TPROJ(WX,WY,WZ,SXO,SYO) { float _rx=(WX)-camx,_ry=(WY)-camy,_rz=(WZ)-camz; \
+      float _vx=_rx*rx+_ry*ry+_rz*rz,_vy=_rx*ux+_ry*uy+_rz*uz,_vz=_rx*fx+_ry*fy+_rz*fz; \
+      if(_vz<0.5f)_vz=0.5f; SXO=(int)(CXs+F*_vx/_vz); SYO=(int)(CYs-F*_vy/_vz); }
+
+  static int hz[320]; for(int i=0;i<320;i++) hz[i]=SCREEN_HEIGHT+8;
+  static int psx[TERR_N], psy[TERR_N]; static uint8_t pvis[TERR_N];
+  int bminx=999,bmaxx=-999,bminy=999,bmaxy=-999;
+
+  for(int gz=N-1; gz>=0; gz--){                        // near (south) → far (north)
+    int csx[TERR_N], csy[TERR_N]; uint16_t ccol[TERR_N]; uint8_t cvis[TERR_N];
+    float wz=((float)gz/(N-1)-0.5f)*SP;
+    for(int gx=0; gx<N; gx++){
+      float wx=((float)gx/(N-1)-0.5f)*SP;
+      float wy=(float)(int16_t)pgm_read_word(&TERRAIN_ELEV[gz*N+gx])*HS*VEX;
+      int sx,sy; TPROJ(wx,wy,wz,sx,sy); csx[gx]=sx; csy[gx]=sy;
+      float h01=(peak>0?wy/peak:0);
+      float eu=(float)gx/(N-1), ev=(float)gz/(N-1), em=fminf(fminf(eu,1-eu),fminf(ev,1-ev));
+      float fade=em/0.16f; if(fade>1)fade=1; fade=0.30f+0.70f*fade; if(fade>1)fade=1;
+      ccol[gx]=terrColor(h01,fade);
+      int hx=sx<0?0:(sx>319?319:sx); cvis[gx]=(sy<=hz[hx])?1:0;
+      if(sx<bminx)bminx=sx; if(sx>bmaxx)bmaxx=sx; if(sy<bminy)bminy=sy; if(sy>bmaxy)bmaxy=sy;
+    }
+    bool drawRow=(gz%2==0);
+    for(int gx=0; gx<N; gx++){
+      if(drawRow && gx>0 && cvis[gx] && cvis[gx-1]) g->drawLine(csx[gx-1],csy[gx-1],csx[gx],csy[gx],ccol[gx]);
+      if((gx%2==0) && gz<N-1 && cvis[gx] && pvis[gx]) g->drawLine(psx[gx],psy[gx],csx[gx],csy[gx],ccol[gx]);
+    }
+    for(int gx=1; gx<N; gx++){                          // rasterise the row into the horizon (occludes farther rows)
+      int x0=csx[gx-1],y0=csy[gx-1],x1=csx[gx],y1=csy[gx];
+      if(x1<x0){int t=x0;x0=x1;x1=t; t=y0;y0=y1;y1=t;}
+      if(x1==x0){ if(x0>=0&&x0<320&&y0<hz[x0])hz[x0]=y0; continue; }
+      for(int x=x0;x<=x1;x++){ if(x<0||x>319)continue; int y=y0+(y1-y0)*(x-x0)/(x1-x0); if(y<hz[x])hz[x]=y; }
+    }
+    for(int gx=0; gx<N; gx++){ psx[gx]=csx[gx]; psy[gx]=csy[gx]; pvis[gx]=cvis[gx]; }
+  }
+  Serial.printf("[terrain] proj bbox sx %d..%d sy %d..%d\n", bminx,bmaxx,bminy,bmaxy);
+
+  // epicentre marker — a short amber beam rising from Milford's coordinates
+  { int egx=(int)(TERR_EPI_U*(N-1)+0.5f), egz=(int)(TERR_EPI_V*(N-1)+0.5f);
+    egx=egx<0?0:(egx>N-1?N-1:egx); egz=egz<0?0:(egz>N-1?N-1:egz);
+    float wy=(float)(int16_t)pgm_read_word(&TERRAIN_ELEV[egz*N+egx])*HS*VEX;
+    int bx,by,tx2,ty2; TPROJ(EX,wy,EZ,bx,by); TPROJ(EX,wy+16,EZ,tx2,ty2);
+    g->drawLine(bx,by,tx2,ty2,ALERT_AMBER); g->fillCircle(bx,by,2,ALERT_AMBER); }
+
+  // HUD readout (top-left, over the far/dim terrain) — the one amber accent is the magnitude
+  g->setFreeFont(&SeisSans10); g->setTextColor(currentTheme.textAccent);
+  g->setCursor(14,20); g->print("SEISMIC ACTIVITY DETECTED");
+  char m[10]; snprintf(m,sizeof(m),"M%.1f",alertQuake.magnitude);
+  g->setFreeFont(&SeisMag); g->setTextColor(alertColor); g->setCursor(12,74); g->print(m);
+  char buf[96]; bool mac[96]; demacron(alertQuake.location,buf,mac,sizeof(buf));
+  g->setFreeFont(&SeisPlace22); g->setTextColor(currentTheme.textPrimary); g->setCursor(14,98); g->print(buf);
+  g->setFreeFont(&SeisSans8); g->setTextColor(currentTheme.textSecondary); g->setCursor(14,114); g->print(alertRegionName());
+  g->drawRoundRect(4,4,312,232,3,PANEL_EDGE);
+  #undef TPROJ
+}
+
+static TFT_eSprite terrSpr = TFT_eSprite(&tft);
+static bool terrSprTried=false, terrSprReady=false;
+void drawTerrainAlert(){
+  if(!terrSprTried){ terrSprTried=true; terrSpr.setColorDepth(16); terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
+    Serial.printf("[terrain] fullscreen sprite %s\n", terrSprReady?"OK":"FAILED (drawing direct)"); }
+  if(terrSprReady){ terrSpr.fillSprite(currentTheme.background); drawTerrainInto(&terrSpr); terrSpr.pushSprite(0,0); }
+  else { tft.fillScreen(currentTheme.background); drawTerrainInto(&tft); }
+}
+
 void displayEarthquakeAlert(EarthquakeData* quake) {
   showingAlert   = true;
   alertStartTime = millis();
   alertQuake     = *quake;
   alertColor     = severityColor(quake->magnitude, quake->depth, quake->mmi);   // GeoNet MMI if we have it, else depth estimate
   alertRingPhase = 0;
+
+  if (terrainAlert) { drawTerrainAlert(); return; }    // Stage-1 terrain look
 
   tft.fillScreen(currentTheme.background);
   drawAlertFrame();                                  // green frame, matching the monitor's panels
@@ -3192,6 +3292,16 @@ static const AlertDemo ALERT_DEMOS[] = {
 static int alertDemoIdx = 0;
 
 void previewAlertCycle() {
+  if (terrainAlert) {                                  // Stage-1 terrain preview: the baked Milford Sound event
+    EarthquakeData q; q.clear();
+    q.magnitude = 4.8f; q.depth = 8.0f;
+    strncpy(q.location, "Milford Sound", sizeof(q.location) - 1);
+    time_t nowt = time(nullptr);
+    q.timestamp = (nowt > 1600000000) ? (unsigned long)nowt - 120 : 0;
+    q.isValid = true;
+    displayEarthquakeAlert(&q);
+    return;
+  }
   const AlertDemo& d = ALERT_DEMOS[alertDemoIdx];
   alertDemoIdx = (alertDemoIdx + 1) % (int)(sizeof(ALERT_DEMOS) / sizeof(ALERT_DEMOS[0]));
   EarthquakeData q; q.clear();
