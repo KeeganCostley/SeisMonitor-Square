@@ -727,7 +727,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v10-terrain", 8, 228, 1);
+    tft.drawString("v10.2-terr", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3191,7 +3191,7 @@ static uint16_t terrColor(float h01, float fade){    // dim green (low) → brig
 
 template <typename T> void drawTerrainInto(T* g){
   const int N = TERR_N;
-  const float SP=100.0f, HS=SP/TERR_KM/1000.0f, VEX=1.5f;
+  const float SP=100.0f, HS=SP/TERR_KM/1000.0f, VEX=2.4f;   // taller than the mockup's 1.5 to offset the coarser grid
   const float peak=(TERR_MAX>0?TERR_MAX:1)*HS*VEX;
   const float EX=(TERR_EPI_U-0.5f)*SP, EZ=(TERR_EPI_V-0.5f)*SP;
   // camera basis (same numbers as the mockup: pitch 44°, D=90, look a touch north of the epicentre)
@@ -3223,10 +3223,9 @@ template <typename T> void drawTerrainInto(T* g){
       int hx=sx<0?0:(sx>319?319:sx); cvis[gx]=(sy<=hz[hx])?1:0;
       if(sx<bminx)bminx=sx; if(sx>bmaxx)bmaxx=sx; if(sy<bminy)bminy=sy; if(sy>bmaxy)bmaxy=sy;
     }
-    bool drawRow=(gz%2==0);
     for(int gx=0; gx<N; gx++){
-      if(drawRow && gx>0 && cvis[gx] && cvis[gx-1]) g->drawLine(csx[gx-1],csy[gx-1],csx[gx],csy[gx],ccol[gx]);
-      if((gx%2==0) && gz<N-1 && cvis[gx] && pvis[gx]) g->drawLine(psx[gx],psy[gx],csx[gx],csy[gx],ccol[gx]);
+      if(gx>0 && cvis[gx] && cvis[gx-1]) g->drawLine(csx[gx-1],csy[gx-1],csx[gx],csy[gx],ccol[gx]);      // every row line
+      if(gz<N-1 && cvis[gx] && pvis[gx]) g->drawLine(psx[gx],psy[gx],csx[gx],csy[gx],ccol[gx]);           // every column line
     }
     for(int gx=1; gx<N; gx++){                          // rasterise the row into the horizon (occludes farther rows)
       int x0=csx[gx-1],y0=csy[gx-1],x1=csx[gx],y1=csy[gx];
@@ -3260,8 +3259,13 @@ template <typename T> void drawTerrainInto(T* g){
 static TFT_eSprite terrSpr = TFT_eSprite(&tft);
 static bool terrSprTried=false, terrSprReady=false;
 void drawTerrainAlert(){
-  if(!terrSprTried){ terrSprTried=true; terrSpr.setColorDepth(16); terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
-    Serial.printf("[terrain] fullscreen sprite %s\n", terrSprReady?"OK":"FAILED (drawing direct)"); }
+  if(!terrSprTried){
+    terrSprTried=true;
+    if(globeSprReady){ globeSpr.deleteSprite(); globeSprReady=false; globeSprTried=false; }   // free RAM; globe re-allocates lazily next Global view
+    terrSpr.setColorDepth(16);
+    terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
+    Serial.printf("[terrain] fullscreen sprite %s (free heap %u)\n", terrSprReady?"OK":"FAILED-drawing-direct", (unsigned)ESP.getFreeHeap());
+  }
   if(terrSprReady){ terrSpr.fillSprite(currentTheme.background); drawTerrainInto(&terrSpr); terrSpr.pushSprite(0,0); }
   else { tft.fillScreen(currentTheme.background); drawTerrainInto(&tft); }
 }
