@@ -94,7 +94,7 @@ const unsigned long API_POLL_INTERVAL = 90000;      // 90s — the fetch is bloc
 const unsigned long SEISMO_UPDATE_INTERVAL = 50;    // 50ms — smoother / higher-res scroll
 const unsigned long DISPLAY_CYCLE_INTERVAL = 60000; // 60 seconds
 const unsigned long REST_MODE_TIMEOUT = 45000;      // 45 seconds
-const unsigned long ALERT_DURATION = 25000;         // 25 seconds
+const unsigned long ALERT_DURATION = 120000;        // 2 minutes (long enough to watch the terrain orbit)
 const unsigned long DEMO_ALERT_MS  = 7000;          // shorter alert while the showreel is playing
 const unsigned long DEBOUNCE_DELAY = 300;           // 300ms
 const int HTTP_TIMEOUT = 15000;                     // 15s — the California M1.0+ feed is ~112KB; small feeds still return fast (this is only a ceiling)
@@ -650,6 +650,8 @@ void displayEarthquakeAlert(EarthquakeData* quake);
 void animateAlertRings();
 void previewAlertCycle();
 extern bool terrainAlert;                              // terrain-alert feature flag (defined below)
+extern float terrSpin;                                 // terrain orbit angle
+void drawTerrainAlert();
 void startDemo();
 void exitDemo();
 void runDemo();
@@ -727,7 +729,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v10.2-terr", 8, 228, 1);
+    tft.drawString("v10.4-orbit", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3150,7 +3152,15 @@ static void drawAlertContent() {
 // the way out — then repaint the content on top so the rings sweep BEHIND it. Rings are clipped inside
 // the frame (setViewport, absolute coords) so they never nibble the border. Driven from loop() every ~55ms.
 void animateAlertRings() {
-  if (terrainAlert) return;                            // terrain alert is static (Stage 1) — no rings to sweep
+  if (terrainAlert) {                                  // orbit the terrain: advance the angle by real time, re-render
+    static unsigned long lastT = 0;
+    unsigned long now = millis();
+    float dt = (lastT == 0) ? 0.03f : (now - lastT) / 1000.0f;
+    lastT = now; if (dt > 0.25f) dt = 0.25f;
+    terrSpin += dt * 0.30f;                             // ~0.30 rad/s — a slow ~21s revolution
+    drawTerrainAlert();
+    return;
+  }
   const int gap = ALERT_MAXR / ALERT_RING_N;
   uint16_t bg = currentTheme.background;
   tft.setViewport(6, 6, 308, 224, false);                  // clip inside the frame; false = absolute coords
@@ -3179,6 +3189,7 @@ void animateAlertRings() {
 // is the next stage. #terrainAlert flips the whole thing back to the old ring alert if we want it.
 // ═══════════════════════════════════════════════════════════════════════════
 bool terrainAlert = true;
+float terrSpin = 0.0f;                  // orbit angle (radians), advanced each animation tick
 const uint16_t ALERT_AMBER = 0xFE68;   // #ffcf47 in 565 — the epicentre marker
 
 static uint16_t terrColor(float h01, float fade){    // dim green (low) → bright phosphor (high), scaled by fade
@@ -3196,7 +3207,8 @@ template <typename T> void drawTerrainInto(T* g){
   const float EX=(TERR_EPI_U-0.5f)*SP, EZ=(TERR_EPI_V-0.5f)*SP;
   // camera basis (same numbers as the mockup: pitch 44°, D=90, look a touch north of the epicentre)
   const float pit=44.0f*0.0174533f, D=90.0f, F=312.6f; const int CXs=160, CYs=120;
-  const float camx=EX, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(pit)*D, tgx=EX, tgy=5.0f, tgz=EZ-10.0f;
+  const float orbR=cosf(pit)*D;                                  // orbit radius around the epicentre
+  const float camx=EX+sinf(terrSpin)*orbR, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(terrSpin)*orbR, tgx=EX, tgy=5.0f, tgz=EZ-10.0f;
   float fx=tgx-camx, fy=tgy-camy, fz=tgz-camz, fl=sqrtf(fx*fx+fy*fy+fz*fz); fx/=fl; fy/=fl; fz/=fl;
   float rx=-fz, rz=fx, rl=sqrtf(rx*rx+rz*rz); rx/=rl; rz/=rl;                 // right = norm(cross(fwd,up))
   const float ry=0.0f;
@@ -3207,18 +3219,22 @@ template <typename T> void drawTerrainInto(T* g){
 
   static int hz[320]; for(int i=0;i<320;i++) hz[i]=SCREEN_HEIGHT+8;
   static int psx[TERR_N], psy[TERR_N]; static uint8_t pvis[TERR_N];
+  static float pwy[TERR_N]; static float pwz=0;                    // previous row's world heights (for contours)
+  const float levW=200.0f*HS*VEX;                                  // contour interval (200 m) in world Y
+  const uint16_t CONTOUR_COL=0xA798;                               // pale bright green — pops over the dim grid
   int bminx=999,bmaxx=-999,bminy=999,bmaxy=-999;
 
   for(int gz=N-1; gz>=0; gz--){                        // near (south) → far (north)
-    int csx[TERR_N], csy[TERR_N]; uint16_t ccol[TERR_N]; uint8_t cvis[TERR_N];
+    int csx[TERR_N], csy[TERR_N]; uint16_t ccol[TERR_N]; uint8_t cvis[TERR_N]; float cwy[TERR_N];
     float wz=((float)gz/(N-1)-0.5f)*SP;
     for(int gx=0; gx<N; gx++){
       float wx=((float)gx/(N-1)-0.5f)*SP;
       float wy=(float)(int16_t)pgm_read_word(&TERRAIN_ELEV[gz*N+gx])*HS*VEX;
+      cwy[gx]=wy;
       int sx,sy; TPROJ(wx,wy,wz,sx,sy); csx[gx]=sx; csy[gx]=sy;
       float h01=(peak>0?wy/peak:0);
       float eu=(float)gx/(N-1), ev=(float)gz/(N-1), em=fminf(fminf(eu,1-eu),fminf(ev,1-ev));
-      float fade=em/0.16f; if(fade>1)fade=1; fade=0.30f+0.70f*fade; if(fade>1)fade=1;
+      float fade=em/0.16f; if(fade>1)fade=1; fade=(0.30f+0.70f*fade)*0.58f;   // dim the base grid so contours read as the map
       ccol[gx]=terrColor(h01,fade);
       int hx=sx<0?0:(sx>319?319:sx); cvis[gx]=(sy<=hz[hx])?1:0;
       if(sx<bminx)bminx=sx; if(sx>bmaxx)bmaxx=sx; if(sy<bminy)bminy=sy; if(sy>bmaxy)bmaxy=sy;
@@ -3227,15 +3243,33 @@ template <typename T> void drawTerrainInto(T* g){
       if(gx>0 && cvis[gx] && cvis[gx-1]) g->drawLine(csx[gx-1],csy[gx-1],csx[gx],csy[gx],ccol[gx]);      // every row line
       if(gz<N-1 && cvis[gx] && pvis[gx]) g->drawLine(psx[gx],psy[gx],csx[gx],csy[gx],ccol[gx]);           // every column line
     }
+    if(gz<N-1){                                         // elevation contours across the band to the nearer row
+      for(int gx=0; gx<N-1; gx++){
+        float wxa=((float)gx/(N-1)-0.5f)*SP, wxb=((float)(gx+1)/(N-1)-0.5f)*SP;
+        float cyc[4]={pwy[gx],pwy[gx+1],cwy[gx+1],cwy[gx]};      // corner heights: near-L, near-R, far-R, far-L
+        float cxc[4]={wxa,wxb,wxb,wxa}, czc[4]={pwz,pwz,wz,wz};
+        float ymn=cyc[0],ymx=cyc[0]; for(int k=1;k<4;k++){ if(cyc[k]<ymn)ymn=cyc[k]; if(cyc[k]>ymx)ymx=cyc[k]; }
+        for(float Lw=ceilf(ymn/levW)*levW; Lw<=ymx; Lw+=levW){
+          if(Lw<0.001f) continue;
+          float px[2],pz[2]; int np=0;
+          for(int e=0;e<4 && np<2;e++){ int a=e,b=(e+1)&3; float ya=cyc[a],yb=cyc[b];
+            if((ya<Lw)!=(yb<Lw)){ float t=(Lw-ya)/(yb-ya); px[np]=cxc[a]+(cxc[b]-cxc[a])*t; pz[np]=czc[a]+(czc[b]-czc[a])*t; np++; } }
+          if(np==2){ int sx0,sy0,sx1,sy1; TPROJ(px[0],Lw,pz[0],sx0,sy0); TPROJ(px[1],Lw,pz[1],sx1,sy1);
+            int hx0=sx0<0?0:(sx0>319?319:sx0), hx1=sx1<0?0:(sx1>319?319:sx1);
+            if(sy0<=hz[hx0]+2 || sy1<=hz[hx1]+2) g->drawLine(sx0,sy0,sx1,sy1,CONTOUR_COL); }
+        }
+      }
+    }
     for(int gx=1; gx<N; gx++){                          // rasterise the row into the horizon (occludes farther rows)
       int x0=csx[gx-1],y0=csy[gx-1],x1=csx[gx],y1=csy[gx];
       if(x1<x0){int t=x0;x0=x1;x1=t; t=y0;y0=y1;y1=t;}
       if(x1==x0){ if(x0>=0&&x0<320&&y0<hz[x0])hz[x0]=y0; continue; }
       for(int x=x0;x<=x1;x++){ if(x<0||x>319)continue; int y=y0+(y1-y0)*(x-x0)/(x1-x0); if(y<hz[x])hz[x]=y; }
     }
-    for(int gx=0; gx<N; gx++){ psx[gx]=csx[gx]; psy[gx]=csy[gx]; pvis[gx]=cvis[gx]; }
+    for(int gx=0; gx<N; gx++){ psx[gx]=csx[gx]; psy[gx]=csy[gx]; pvis[gx]=cvis[gx]; pwy[gx]=cwy[gx]; }
+    pwz=wz;
   }
-  Serial.printf("[terrain] proj bbox sx %d..%d sy %d..%d\n", bminx,bmaxx,bminy,bmaxy);
+  (void)bminx;(void)bmaxx;(void)bminy;(void)bmaxy;
 
   // epicentre marker — a short amber beam rising from Milford's coordinates
   { int egx=(int)(TERR_EPI_U*(N-1)+0.5f), egz=(int)(TERR_EPI_V*(N-1)+0.5f);
@@ -3266,8 +3300,10 @@ void drawTerrainAlert(){
     terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
     Serial.printf("[terrain] fullscreen sprite %s (free heap %u)\n", terrSprReady?"OK":"FAILED-drawing-direct", (unsigned)ESP.getFreeHeap());
   }
+  unsigned long _t0=millis();
   if(terrSprReady){ terrSpr.fillSprite(currentTheme.background); drawTerrainInto(&terrSpr); terrSpr.pushSprite(0,0); }
   else { tft.fillScreen(currentTheme.background); drawTerrainInto(&tft); }
+  static uint8_t _fc=0; if((_fc++ & 15)==0) Serial.printf("[terrain] frame %lums\n",(unsigned long)(millis()-_t0));
 }
 
 void displayEarthquakeAlert(EarthquakeData* quake) {
@@ -3277,7 +3313,7 @@ void displayEarthquakeAlert(EarthquakeData* quake) {
   alertColor     = severityColor(quake->magnitude, quake->depth, quake->mmi);   // GeoNet MMI if we have it, else depth estimate
   alertRingPhase = 0;
 
-  if (terrainAlert) { drawTerrainAlert(); return; }    // Stage-1 terrain look
+  if (terrainAlert) { terrSpin = 0.0f; drawTerrainAlert(); return; }   // terrain look; loop() orbits it
 
   tft.fillScreen(currentTheme.background);
   drawAlertFrame();                                  // green frame, matching the monitor's panels
