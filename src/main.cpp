@@ -729,7 +729,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v10.4-orbit", 8, 228, 1);
+    tft.drawString("v10.6-orbit2", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3157,7 +3157,7 @@ void animateAlertRings() {
     unsigned long now = millis();
     float dt = (lastT == 0) ? 0.03f : (now - lastT) / 1000.0f;
     lastT = now; if (dt > 0.25f) dt = 0.25f;
-    terrSpin += dt * 0.30f;                             // ~0.30 rad/s — a slow ~21s revolution
+    terrSpin += dt * 0.13f;                             // ~0.13 rad/s — a slow ~48s revolution
     drawTerrainAlert();
     return;
   }
@@ -3208,7 +3208,7 @@ template <typename T> void drawTerrainInto(T* g){
   // camera basis (same numbers as the mockup: pitch 44°, D=90, look a touch north of the epicentre)
   const float pit=44.0f*0.0174533f, D=90.0f, F=312.6f; const int CXs=160, CYs=120;
   const float orbR=cosf(pit)*D;                                  // orbit radius around the epicentre
-  const float camx=EX+sinf(terrSpin)*orbR, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(terrSpin)*orbR, tgx=EX, tgy=5.0f, tgz=EZ-10.0f;
+  const float camx=EX+sinf(terrSpin)*orbR, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(terrSpin)*orbR, tgx=EX, tgy=5.0f, tgz=EZ;   // look at the spin axis for a clean orbit
   float fx=tgx-camx, fy=tgy-camy, fz=tgz-camz, fl=sqrtf(fx*fx+fy*fy+fz*fz); fx/=fl; fy/=fl; fz/=fl;
   float rx=-fz, rz=fx, rl=sqrtf(rx*rx+rz*rz); rx/=rl; rz/=rl;                 // right = norm(cross(fwd,up))
   const float ry=0.0f;
@@ -3282,7 +3282,7 @@ template <typename T> void drawTerrainInto(T* g){
   g->setFreeFont(&SeisSans10); g->setTextColor(currentTheme.textAccent);
   g->setCursor(14,20); g->print("SEISMIC ACTIVITY DETECTED");
   char m[10]; snprintf(m,sizeof(m),"M%.1f",alertQuake.magnitude);
-  g->setFreeFont(&SeisMag); g->setTextColor(alertColor); g->setCursor(12,74); g->print(m);
+  g->setFreeFont(&SeisMag); g->setTextColor(ALERT_AMBER); g->setCursor(12,74); g->print(m);   // magnitude is always amber (the one accent)
   char buf[96]; bool mac[96]; demacron(alertQuake.location,buf,mac,sizeof(buf));
   g->setFreeFont(&SeisPlace22); g->setTextColor(currentTheme.textPrimary); g->setCursor(14,98); g->print(buf);
   g->setFreeFont(&SeisSans8); g->setTextColor(currentTheme.textSecondary); g->setCursor(14,114); g->print(alertRegionName());
@@ -3291,14 +3291,19 @@ template <typename T> void drawTerrainInto(T* g){
 }
 
 static TFT_eSprite terrSpr = TFT_eSprite(&tft);
-static bool terrSprTried=false, terrSprReady=false;
+static bool terrSprTried=false, terrSprReady=false, terrSpr8=false;
 void drawTerrainAlert(){
   if(!terrSprTried){
     terrSprTried=true;
     if(globeSprReady){ globeSpr.deleteSprite(); globeSprReady=false; globeSprTried=false; }   // free RAM; globe re-allocates lazily next Global view
     terrSpr.setColorDepth(16);
     terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
-    Serial.printf("[terrain] fullscreen sprite %s (free heap %u)\n", terrSprReady?"OK":"FAILED-drawing-direct", (unsigned)ESP.getFreeHeap());
+    if(!terrSprReady){                                   // 154KB (16bpp) didn't fit — fall back to 77KB (8bpp)
+      terrSpr.setColorDepth(8);
+      terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
+      terrSpr8=terrSprReady;
+    }
+    Serial.printf("[terrain] sprite %s %s, free heap %u\n", terrSprReady?"OK":"FAILED-direct", terrSpr8?"(8bpp)":"(16bpp)", (unsigned)ESP.getFreeHeap());
   }
   unsigned long _t0=millis();
   if(terrSprReady){ terrSpr.fillSprite(currentTheme.background); drawTerrainInto(&terrSpr); terrSpr.pushSprite(0,0); }
