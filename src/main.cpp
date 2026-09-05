@@ -729,7 +729,7 @@ void drawLoadingScreen(const char* status, int frame) {
     tft.setTextColor(currentTheme.textAccent);
     tft.drawCentreString(status, 160, 172, 1);
     tft.setTextColor(currentTheme.sub);
-    tft.drawString("v10.6-orbit2", 8, 228, 1);
+    tft.drawString("v10.12-wide", 8, 228, 1);
     tft.drawString("ES3C28P", 320 - 8 - tft.textWidth("ES3C28P"), 228, 1);
   }
 
@@ -3152,12 +3152,13 @@ static void drawAlertContent() {
 // the way out — then repaint the content on top so the rings sweep BEHIND it. Rings are clipped inside
 // the frame (setViewport, absolute coords) so they never nibble the border. Driven from loop() every ~55ms.
 void animateAlertRings() {
-  if (terrainAlert) {                                  // orbit the terrain: advance the angle by real time, re-render
+  if (terrainAlert) {                                  // full slow orbit — the adaptive near→far sweep keeps HLR correct all the way round
     static unsigned long lastT = 0;
     unsigned long now = millis();
     float dt = (lastT == 0) ? 0.03f : (now - lastT) / 1000.0f;
     lastT = now; if (dt > 0.25f) dt = 0.25f;
-    terrSpin += dt * 0.13f;                             // ~0.13 rad/s — a slow ~48s revolution
+    terrSpin += dt * 0.08f;                             // ~0.08 rad/s (~78 s / revolution) — slow and calm
+    if (terrSpin > 6.2831853f) terrSpin -= 6.2831853f;
     drawTerrainAlert();
     return;
   }
@@ -3190,7 +3191,8 @@ void animateAlertRings() {
 // ═══════════════════════════════════════════════════════════════════════════
 bool terrainAlert = true;
 float terrSpin = 0.0f;                  // orbit angle (radians), advanced each animation tick
-const uint16_t ALERT_AMBER = 0xFE68;   // #ffcf47 in 565 — the epicentre marker
+const uint16_t ALERT_AMBER = 0xFE68;   // #ffcf47 in 565 — amber accent (correct on the 16-bit panel)
+uint16_t gSpriteAmber = 0xFE68;        // amber to use INSIDE the terrain buffer (R/B-swapped when it's 8-bit so it reads amber, not blue)
 
 static uint16_t terrColor(float h01, float fade){    // dim green (low) → bright phosphor (high), scaled by fade
   uint16_t lo = currentTheme.sub, hi = currentTheme.textAccent;
@@ -3199,6 +3201,20 @@ static uint16_t terrColor(float h01, float fade){    // dim green (low) → brig
   int r=(int)((lr+(hr-lr)*h01)*fade), g=(int)((lg+(hg-lg)*h01)*fade), b=(int)((lb+(hb-lb)*h01)*fade);
   return (uint16_t)((r<<11)|(g<<5)|b);
 }
+static uint16_t dim565(uint16_t c, float f){         // scale a 565 colour's brightness by f (0..1)
+  if(f<0)f=0; if(f>1)f=1;
+  int r=(c>>11)&0x1F, g=(c>>5)&0x3F, b=c&0x1F;
+  return (uint16_t)((((int)(r*f))<<11)|(((int)(g*f))<<5)|((int)(b*f)));
+}
+const uint16_t COAST_COL = 0xCFFA;                    // bright near-white green — the coastline outline (recognisable land shape)
+
+// HUD text with a dark halo so it stays legible over the moving terrain (font must be set by the caller)
+template <typename T> void hudText(T* g, const char* s, int x, int y, uint16_t col){
+  g->setTextColor(currentTheme.background);
+  g->setCursor(x-1,y); g->print(s); g->setCursor(x+1,y); g->print(s);
+  g->setCursor(x,y-1); g->print(s); g->setCursor(x,y+1); g->print(s);
+  g->setTextColor(col); g->setCursor(x,y); g->print(s);
+}
 
 template <typename T> void drawTerrainInto(T* g){
   const int N = TERR_N;
@@ -3206,7 +3222,7 @@ template <typename T> void drawTerrainInto(T* g){
   const float peak=(TERR_MAX>0?TERR_MAX:1)*HS*VEX;
   const float EX=(TERR_EPI_U-0.5f)*SP, EZ=(TERR_EPI_V-0.5f)*SP;
   // camera basis (same numbers as the mockup: pitch 44°, D=90, look a touch north of the epicentre)
-  const float pit=44.0f*0.0174533f, D=90.0f, F=312.6f; const int CXs=160, CYs=120;
+  const float pit=44.0f*0.0174533f, D=90.0f, F=235.0f; const int CXs=160, CYs=120;   // wider FOV = terrain smaller in frame, more negative space
   const float orbR=cosf(pit)*D;                                  // orbit radius around the epicentre
   const float camx=EX+sinf(terrSpin)*orbR, camy=5.0f+sinf(pit)*D, camz=EZ+cosf(terrSpin)*orbR, tgx=EX, tgy=5.0f, tgz=EZ;   // look at the spin axis for a clean orbit
   float fx=tgx-camx, fy=tgy-camy, fz=tgz-camz, fl=sqrtf(fx*fx+fy*fy+fz*fz); fx/=fl; fy/=fl; fz/=fl;
@@ -3219,74 +3235,94 @@ template <typename T> void drawTerrainInto(T* g){
 
   static int hz[320]; for(int i=0;i<320;i++) hz[i]=SCREEN_HEIGHT+8;
   static int psx[TERR_N], psy[TERR_N]; static uint8_t pvis[TERR_N];
-  static float pwy[TERR_N]; static float pwz=0;                    // previous row's world heights (for contours)
-  const float levW=200.0f*HS*VEX;                                  // contour interval (200 m) in world Y
+  static float pwx[TERR_N], pwy[TERR_N], pwz[TERR_N], pdf[TERR_N]; // previous sweep line's world coords + depth-fade
+  const float levW=350.0f*HS*VEX;                                  // contour interval (350 m) — fewer lines: lighter + less crowded
   const uint16_t CONTOUR_COL=0xA798;                               // pale bright green — pops over the dim grid
-  int bminx=999,bmaxx=-999,bminy=999,bmaxy=-999;
+  const float FARV=D+45.0f, INVDEPTH=1.0f/55.0f;                   // distance fade: full to the look-point (vz~D), gone ~55 beyond (declutters the distance)
 
-  for(int gz=N-1; gz>=0; gz--){                        // near (south) → far (north)
-    int csx[TERR_N], csy[TERR_N]; uint16_t ccol[TERR_N]; uint8_t cvis[TERR_N]; float cwy[TERR_N];
-    float wz=((float)gz/(N-1)-0.5f)*SP;
-    for(int gx=0; gx<N; gx++){
-      float wx=((float)gx/(N-1)-0.5f)*SP;
+  // Sweep the grid NEAR→FAR relative to the CURRENT camera angle so hidden-line removal stays correct all
+  // the way around the orbit. Which side is "near" depends on the angle → sweep rows or columns, fwd or back;
+  // the projection / horizon / grid / contour logic is identical either way (indices a = depth, b = across).
+  const float ct=cosf(terrSpin), st=sinf(terrSpin);
+  const bool useRows  = fabsf(ct) >= fabsf(st);
+  const bool nearHigh = useRows ? (ct > 0) : (st > 0);
+
+  for(int a=0; a<N; a++){
+    int csx[TERR_N], csy[TERR_N]; uint16_t ccol[TERR_N]; uint8_t cvis[TERR_N];
+    float cwx[TERR_N], cwy[TERR_N], cwz[TERR_N], cdf[TERR_N];
+    for(int b=0; b<N; b++){
+      int gx, gz;
+      if(useRows){ gz = nearHigh ? (N-1-a) : a; gx = b; }
+      else       { gx = nearHigh ? (N-1-a) : a; gz = b; }
+      float wx=((float)gx/(N-1)-0.5f)*SP, wz=((float)gz/(N-1)-0.5f)*SP;
       float wy=(float)(int16_t)pgm_read_word(&TERRAIN_ELEV[gz*N+gx])*HS*VEX;
-      cwy[gx]=wy;
-      int sx,sy; TPROJ(wx,wy,wz,sx,sy); csx[gx]=sx; csy[gx]=sy;
+      cwx[b]=wx; cwz[b]=wz; cwy[b]=wy;
+      float vz=(wx-camx)*fx+(wy-camy)*fy+(wz-camz)*fz;                          // view depth
+      float df=(FARV-vz)*INVDEPTH; if(df<0)df=0; if(df>1)df=1; cdf[b]=df;       // distance fade (far → dark)
+      int sx,sy; TPROJ(wx,wy,wz,sx,sy); csx[b]=sx; csy[b]=sy;
       float h01=(peak>0?wy/peak:0);
       float eu=(float)gx/(N-1), ev=(float)gz/(N-1), em=fminf(fminf(eu,1-eu),fminf(ev,1-ev));
-      float fade=em/0.16f; if(fade>1)fade=1; fade=(0.30f+0.70f*fade)*0.58f;   // dim the base grid so contours read as the map
-      ccol[gx]=terrColor(h01,fade);
-      int hx=sx<0?0:(sx>319?319:sx); cvis[gx]=(sy<=hz[hx])?1:0;
-      if(sx<bminx)bminx=sx; if(sx>bmaxx)bmaxx=sx; if(sy<bminy)bminy=sy; if(sy>bmaxy)bmaxy=sy;
+      float ef=em/0.16f; if(ef>1)ef=1;
+      ccol[b]=terrColor(h01, (0.30f+0.70f*ef)*0.58f*df);                        // edge + distance fade
+      int hx=sx<0?0:(sx>319?319:sx); cvis[b]=(sy<=hz[hx])?1:0;
     }
-    for(int gx=0; gx<N; gx++){
-      if(gx>0 && cvis[gx] && cvis[gx-1]) g->drawLine(csx[gx-1],csy[gx-1],csx[gx],csy[gx],ccol[gx]);      // every row line
-      if(gz<N-1 && cvis[gx] && pvis[gx]) g->drawLine(psx[gx],psy[gx],csx[gx],csy[gx],ccol[gx]);           // every column line
+    for(int b=0; b<N; b++){                             // across line + connector to previous sweep line (skip the faded-out distance)
+      if(b>0 && cvis[b] && cvis[b-1] && (cdf[b]>0.04f||cdf[b-1]>0.04f)) g->drawLine(csx[b-1],csy[b-1],csx[b],csy[b],ccol[b]);
+      if(a>0 && cvis[b] && pvis[b]   && (cdf[b]>0.04f||pdf[b]>0.04f))   g->drawLine(psx[b],psy[b],csx[b],csy[b],ccol[b]);
     }
-    if(gz<N-1){                                         // elevation contours across the band to the nearer row
-      for(int gx=0; gx<N-1; gx++){
-        float wxa=((float)gx/(N-1)-0.5f)*SP, wxb=((float)(gx+1)/(N-1)-0.5f)*SP;
-        float cyc[4]={pwy[gx],pwy[gx+1],cwy[gx+1],cwy[gx]};      // corner heights: near-L, near-R, far-R, far-L
-        float cxc[4]={wxa,wxb,wxb,wxa}, czc[4]={pwz,pwz,wz,wz};
+    if(a>0){                                            // coastline + elevation contours in the band to the previous sweep line
+      for(int b=0; b<N-1; b++){
+        float cellDf=0.25f*(cdf[b]+cdf[b+1]+pdf[b]+pdf[b+1]);
+        if(cellDf<0.05f) continue;                      // fully-faded distance — skip (declutter + speed)
+        float cyc[4]={pwy[b],pwy[b+1],cwy[b+1],cwy[b]};
+        float cxx[4]={pwx[b],pwx[b+1],cwx[b+1],cwx[b]};
+        float czz[4]={pwz[b],pwz[b+1],cwz[b+1],cwz[b]};
         float ymn=cyc[0],ymx=cyc[0]; for(int k=1;k<4;k++){ if(cyc[k]<ymn)ymn=cyc[k]; if(cyc[k]>ymx)ymx=cyc[k]; }
-        for(float Lw=ceilf(ymn/levW)*levW; Lw<=ymx; Lw+=levW){
-          if(Lw<0.001f) continue;
-          float px[2],pz[2]; int np=0;
-          for(int e=0;e<4 && np<2;e++){ int a=e,b=(e+1)&3; float ya=cyc[a],yb=cyc[b];
-            if((ya<Lw)!=(yb<Lw)){ float t=(Lw-ya)/(yb-ya); px[np]=cxc[a]+(cxc[b]-cxc[a])*t; pz[np]=czc[a]+(czc[b]-czc[a])*t; np++; } }
-          if(np==2){ int sx0,sy0,sx1,sy1; TPROJ(px[0],Lw,pz[0],sx0,sy0); TPROJ(px[1],Lw,pz[1],sx1,sy1);
+        if(ymn<0.0f && ymx>0.0f){                       // COASTLINE (sea level) — the recognisable land outline: bold + bright, barely faded
+          float qx[2],qz[2]; int np=0;
+          for(int e=0;e<4 && np<2;e++){ int c0=e,c1=(e+1)&3; float ya=cyc[c0],yb=cyc[c1];
+            if((ya<0)!=(yb<0)){ float t=(0-ya)/(yb-ya); qx[np]=cxx[c0]+(cxx[c1]-cxx[c0])*t; qz[np]=czz[c0]+(czz[c1]-czz[c0])*t; np++; } }
+          if(np==2){ int sx0,sy0,sx1,sy1; TPROJ(qx[0],0,qz[0],sx0,sy0); TPROJ(qx[1],0,qz[1],sx1,sy1);
             int hx0=sx0<0?0:(sx0>319?319:sx0), hx1=sx1<0?0:(sx1>319?319:sx1);
-            if(sy0<=hz[hx0]+2 || sy1<=hz[hx1]+2) g->drawLine(sx0,sy0,sx1,sy1,CONTOUR_COL); }
+            if(sy0<=hz[hx0]+2 || sy1<=hz[hx1]+2){ uint16_t cc=dim565(COAST_COL, cellDf<0.5f?0.5f:cellDf);
+              g->drawLine(sx0,sy0,sx1,sy1,cc); g->drawLine(sx0,sy0+1,sx1,sy1+1,cc); } }
+        }
+        uint16_t ccol2=dim565(CONTOUR_COL, cellDf);
+        for(float Lw=ceilf(ymn/levW)*levW; Lw<=ymx; Lw+=levW){
+          if(Lw<levW*0.5f) continue;                    // sea level handled as the coastline above
+          float qx[2],qz[2]; int np=0;
+          for(int e=0;e<4 && np<2;e++){ int c0=e,c1=(e+1)&3; float ya=cyc[c0],yb=cyc[c1];
+            if((ya<Lw)!=(yb<Lw)){ float t=(Lw-ya)/(yb-ya); qx[np]=cxx[c0]+(cxx[c1]-cxx[c0])*t; qz[np]=czz[c0]+(czz[c1]-czz[c0])*t; np++; } }
+          if(np==2){ int sx0,sy0,sx1,sy1; TPROJ(qx[0],Lw,qz[0],sx0,sy0); TPROJ(qx[1],Lw,qz[1],sx1,sy1);
+            int hx0=sx0<0?0:(sx0>319?319:sx0), hx1=sx1<0?0:(sx1>319?319:sx1);
+            if(sy0<=hz[hx0]+2 || sy1<=hz[hx1]+2) g->drawLine(sx0,sy0,sx1,sy1,ccol2); }
         }
       }
     }
-    for(int gx=1; gx<N; gx++){                          // rasterise the row into the horizon (occludes farther rows)
-      int x0=csx[gx-1],y0=csy[gx-1],x1=csx[gx],y1=csy[gx];
+    for(int b=1; b<N; b++){                             // rasterise this sweep line into the horizon
+      int x0=csx[b-1],y0=csy[b-1],x1=csx[b],y1=csy[b];
       if(x1<x0){int t=x0;x0=x1;x1=t; t=y0;y0=y1;y1=t;}
       if(x1==x0){ if(x0>=0&&x0<320&&y0<hz[x0])hz[x0]=y0; continue; }
       for(int x=x0;x<=x1;x++){ if(x<0||x>319)continue; int y=y0+(y1-y0)*(x-x0)/(x1-x0); if(y<hz[x])hz[x]=y; }
     }
-    for(int gx=0; gx<N; gx++){ psx[gx]=csx[gx]; psy[gx]=csy[gx]; pvis[gx]=cvis[gx]; pwy[gx]=cwy[gx]; }
-    pwz=wz;
+    for(int b=0; b<N; b++){ psx[b]=csx[b]; psy[b]=csy[b]; pvis[b]=cvis[b]; pwx[b]=cwx[b]; pwy[b]=cwy[b]; pwz[b]=cwz[b]; pdf[b]=cdf[b]; }
   }
-  (void)bminx;(void)bmaxx;(void)bminy;(void)bmaxy;
 
-  // epicentre marker — a short amber beam rising from Milford's coordinates
+  // epicentre marker + readout, drawn INTO the buffer (one clean push → no flashing). Magnitude uses the
+  // buffer-corrected amber, and the readout carries a dark halo so it stays legible over the terrain.
   { int egx=(int)(TERR_EPI_U*(N-1)+0.5f), egz=(int)(TERR_EPI_V*(N-1)+0.5f);
     egx=egx<0?0:(egx>N-1?N-1:egx); egz=egz<0?0:(egz>N-1?N-1:egz);
     float wy=(float)(int16_t)pgm_read_word(&TERRAIN_ELEV[egz*N+egx])*HS*VEX;
     int bx,by,tx2,ty2; TPROJ(EX,wy,EZ,bx,by); TPROJ(EX,wy+16,EZ,tx2,ty2);
-    g->drawLine(bx,by,tx2,ty2,ALERT_AMBER); g->fillCircle(bx,by,2,ALERT_AMBER); }
+    g->drawLine(bx,by,tx2,ty2,gSpriteAmber); g->fillCircle(bx,by,2,gSpriteAmber); }
 
-  // HUD readout (top-left, over the far/dim terrain) — the one amber accent is the magnitude
-  g->setFreeFont(&SeisSans10); g->setTextColor(currentTheme.textAccent);
-  g->setCursor(14,20); g->print("SEISMIC ACTIVITY DETECTED");
-  char m[10]; snprintf(m,sizeof(m),"M%.1f",alertQuake.magnitude);
-  g->setFreeFont(&SeisMag); g->setTextColor(ALERT_AMBER); g->setCursor(12,74); g->print(m);   // magnitude is always amber (the one accent)
-  char buf[96]; bool mac[96]; demacron(alertQuake.location,buf,mac,sizeof(buf));
-  g->setFreeFont(&SeisPlace22); g->setTextColor(currentTheme.textPrimary); g->setCursor(14,98); g->print(buf);
-  g->setFreeFont(&SeisSans8); g->setTextColor(currentTheme.textSecondary); g->setCursor(14,114); g->print(alertRegionName());
   g->drawRoundRect(4,4,312,232,3,PANEL_EDGE);
+  g->setFreeFont(&SeisSans10); hudText(g,"SEISMIC ACTIVITY DETECTED",14,20,currentTheme.textAccent);
+  char m[10]; snprintf(m,sizeof(m),"M%.1f",alertQuake.magnitude);
+  g->setFreeFont(&SeisMag); hudText(g,m,12,74,gSpriteAmber);
+  char buf[96]; bool mac[96]; demacron(alertQuake.location,buf,mac,sizeof(buf));
+  g->setFreeFont(&SeisSans10); hudText(g,buf,14,92,currentTheme.textPrimary);        // place — smaller (was SeisPlace22, too big)
+  g->setFreeFont(&SeisSans8); hudText(g,alertRegionName(),14,106,currentTheme.textSecondary);
   #undef TPROJ
 }
 
@@ -3303,7 +3339,8 @@ void drawTerrainAlert(){
       terrSprReady=(terrSpr.createSprite(SCREEN_WIDTH,SCREEN_HEIGHT)!=nullptr);
       terrSpr8=terrSprReady;
     }
-    Serial.printf("[terrain] sprite %s %s, free heap %u\n", terrSprReady?"OK":"FAILED-direct", terrSpr8?"(8bpp)":"(16bpp)", (unsigned)ESP.getFreeHeap());
+    gSpriteAmber = 0x467F;                             // this panel's off-screen buffers render amber as blue (RGB vs BGR) — pre-swap R/B
+    Serial.printf("[terrain] sprite %s %s, free heap %u, psram %u\n", terrSprReady?"OK":"FAILED-direct", terrSpr8?"(8bpp)":"(16bpp)", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getPsramSize());
   }
   unsigned long _t0=millis();
   if(terrSprReady){ terrSpr.fillSprite(currentTheme.background); drawTerrainInto(&terrSpr); terrSpr.pushSprite(0,0); }
